@@ -14,7 +14,7 @@ if [ -e $D/io_cache_read ] && [ -e $D/io_cache_write ]; then
 else
 	echo "FAIL: this kernel has no nfsd io_cache knobs"; fail=1
 fi
-rpm -q --changelog kernel-core-$(uname -r) | grep -i -m5 "nfsd.*\(direct\|dontcache\|io_cache\)"
+rpm -q --changelog kernel-core-$(uname -r) | grep -i -m8 "nfsd.*\(direct\|dontcache\|io_cache\|debugfs\)"
 
 B=/var/tmp/nd
 mkdir -p $B/img /srv/md /srv/zfs /mnt/md /mnt/zfs

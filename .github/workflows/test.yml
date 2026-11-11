@@ -1,0 +1,26 @@
+name: nfsd direct I/O on AlmaLinux 10
+
+on:
+  push:
+    branches: [main]
+    paths: ['test/**', '.github/workflows/test.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: vmactions/almalinux-vm@v1.0.1
+        with:
+          release: "10"
+          mem: 8192
+          cpu: 4
+          usesh: true
+          prepare: sh test/prepare.sh
+          run: sh test/run.sh

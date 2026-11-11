@@ -44,7 +44,7 @@ exportfs -v
 mount -t nfs -o vers=4.2,rsize=1048576,wsize=1048576 127.0.0.1:/srv/md /mnt/md
 mount -t nfs -o vers=4.2,rsize=1048576,wsize=1048576 127.0.0.1:/srv/zfs /mnt/zfs
 
-arc() { awk '$1 == "data_size" { print int($3 / 1048576) }' /proc/spl/kstat/zfs/arcstats; }
+arc() { awk '$1 == "size" { print int($3 / 1048576) }' /proc/spl/kstat/zfs/arcstats; }
 pc() { fincore -nb -o RES "$1" | awk '{ print int($1 / 1048576) }'; }
 cold() {
 	# Empty the server's caches so that a read has to go to the disks.
@@ -55,14 +55,16 @@ cold() {
 	mount -t nfs -o vers=4.2,rsize=1048576,wsize=1048576 127.0.0.1:/srv/zfs /mnt/zfs
 }
 setmode() {
-	[ -e $D/io_cache_read ] || return 0
-	echo $1 > $D/io_cache_read; echo $1 > $D/io_cache_write
+	[ -e $D/io_cache_read ] || return 1
+	echo $1 > $D/io_cache_read && echo $1 > $D/io_cache_write
 }
 
-# mode 0 = buffered, 2 = direct
-for mode in 0 2; do
-	[ $mode = 2 ] && [ ! -e $D/io_cache_read ] && break
-	setmode $mode
+# mode 0 = buffered, 1 = dontcache, 2 = direct
+for mode in 0 1 2; do
+	if ! setmode $mode; then
+		echo "FAIL: this kernel refuses io_cache mode $mode"; fail=1
+		continue
+	fi
 	echo "=== mode $mode"
 	for fs in md zfs; do
 		f=f$mode
@@ -77,13 +79,13 @@ for mode in 0 2; do
 		r_pc=$(pc /srv/$fs/$f); r_arc=$(( $(arc) - a0 ))
 		echo "MEASURE mode=$mode fs=$fs write: page cache ${w_pc}MiB, ARC +${w_arc}MiB; $r"
 		echo "MEASURE mode=$mode fs=$fs read:  page cache ${r_pc}MiB, ARC +${r_arc}MiB; $s"
-		if [ $mode = 2 ]; then
+		if [ $mode != 0 ]; then
 			c=$r_pc; [ $fs = zfs ] && c=$r_arc
-			[ "$c" -lt 64 ] && echo "PASS: $fs direct read left ${c}MiB cached" ||
-				{ echo "FAIL: $fs direct read left ${c}MiB cached"; fail=1; }
+			[ "$c" -lt 64 ] && echo "PASS: $fs mode $mode read left ${c}MiB cached" ||
+				{ echo "FAIL: $fs mode $mode read left ${c}MiB cached"; fail=1; }
 			c=$w_pc; [ $fs = zfs ] && c=$w_arc
-			[ "$c" -lt 64 ] && echo "PASS: $fs direct write left ${c}MiB cached" ||
-				{ echo "FAIL: $fs direct write left ${c}MiB cached"; fail=1; }
+			[ "$c" -lt 64 ] && echo "PASS: $fs mode $mode write left ${c}MiB cached" ||
+				{ echo "FAIL: $fs mode $mode write left ${c}MiB cached"; fail=1; }
 		fi
 	done
 done

@@ -1,0 +1,64 @@
+From aa166ad3b9e8141f25a66a1c25d792a480a3df7a Mon Sep 17 00:00:00 2001
+From: Showta Ishizaki <zakinko@snowrabbit.org>
+Date: Wed, 11 Nov 2026 20:00:21 +0000
+Subject: [PATCH 05/23] NFSD: Use rqstp->rq_bvec in nfsd_iter_read()
+
+JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
+
+commit 2a48f3adc2ddb922ea5dc602e2e52952df91a99c
+Author: Chuck Lever <chuck.lever@oracle.com>
+Date:   Tue, 6 May 2025 14:33:11 -0400
+
+    If we can get rid of all uses of rq_vec, then it can be removed.
+    Replace one use of rqstp::rq_vec with rqstp::rq_bvec.
+
+    Suggested-by: Christoph Hellwig <hch@infradead.org>
+    Reviewed-by: Jeff Layton <jlayton@kernel.org>
+    Signed-off-by: Chuck Lever <chuck.lever@oracle.com>
+
+Conflicts: RHEL 9 svc_rqst has fixed rq_vec/rq_bvec arrays and no
+    rq_maxpages, so the bound check uses ARRAY_SIZE(rqstp->rq_bvec).
+
+Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
+---
+ fs/nfsd/vfs.c | 14 +++++++-------
+ 1 file changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
+index 20cc6dd..f07ffb4 100644
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -1098,23 +1098,23 @@ __be32 nfsd_iter_read(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 	unsigned long v, total;
+ 	struct iov_iter iter;
+ 	loff_t ppos = offset;
+-	struct page *page;
+ 	ssize_t host_err;
++	size_t len;
+ 
+ 	v = 0;
+ 	total = *count;
+ 	while (total) {
+-		page = *(rqstp->rq_next_page++);
+-		rqstp->rq_vec[v].iov_base = page_address(page) + base;
+-		rqstp->rq_vec[v].iov_len = min_t(size_t, total, PAGE_SIZE - base);
+-		total -= rqstp->rq_vec[v].iov_len;
++		len = min_t(size_t, total, PAGE_SIZE - base);
++		bvec_set_page(&rqstp->rq_bvec[v], *(rqstp->rq_next_page++),
++			      len, base);
++		total -= len;
+ 		++v;
+ 		base = 0;
+ 	}
+-	WARN_ON_ONCE(v > ARRAY_SIZE(rqstp->rq_vec));
++	WARN_ON_ONCE(v > ARRAY_SIZE(rqstp->rq_bvec));
+ 
+ 	trace_nfsd_read_vector(rqstp, fhp, offset, *count);
+-	iov_iter_kvec(&iter, ITER_DEST, rqstp->rq_vec, v, *count);
++	iov_iter_bvec(&iter, ITER_DEST, rqstp->rq_bvec, v, *count);
+ 	host_err = vfs_iter_read(file, &iter, &ppos, 0);
+ 	return nfsd_finish_read(rqstp, fhp, file, offset, count, eof, host_err);
+ }
+-- 
+2.55.0
+

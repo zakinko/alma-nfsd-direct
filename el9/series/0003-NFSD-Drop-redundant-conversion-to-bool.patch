@@ -1,0 +1,39 @@
+From 2326dff2ebf0d4a329b8ffe8f165dd50fed6b6f2 Mon Sep 17 00:00:00 2001
+From: Showta Ishizaki <zakinko@snowrabbit.org>
+Date: Wed, 11 Nov 2026 19:57:29 +0000
+Subject: [PATCH 03/23] NFSD: Drop redundant conversion to bool
+
+JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
+
+commit f64397e04b4d094319a8f72bb1b82e4d2e3672ae
+Author: Xichao Zhao <zhao.xichao@vivo.com>
+Date:   Mon, 18 Aug 2025 18:03:20 +0800
+
+    The result of integer comparison already evaluates to bool. No need for
+    explicit conversion.
+
+    Signed-off-by: Xichao Zhao <zhao.xichao@vivo.com>
+    Reviewed-by: Jeff Layton <jlayton@kernel.org>
+    Signed-off-by: Chuck Lever <chuck.lever@oracle.com>
+
+Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
+---
+ fs/nfsd/debugfs.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/fs/nfsd/debugfs.c b/fs/nfsd/debugfs.c
+index 84b0c8b..f07d790 100644
+--- a/fs/nfsd/debugfs.c
++++ b/fs/nfsd/debugfs.c
+@@ -26,7 +26,7 @@ static int nfsd_dsr_get(void *data, u64 *val)
+ 
+ static int nfsd_dsr_set(void *data, u64 val)
+ {
+-	nfsd_disable_splice_read = (val > 0) ? true : false;
++	nfsd_disable_splice_read = (val > 0);
+ 	return 0;
+ }
+ 
+-- 
+2.55.0
+

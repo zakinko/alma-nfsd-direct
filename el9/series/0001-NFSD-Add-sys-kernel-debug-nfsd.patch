@@ -1,0 +1,117 @@
+From 1cd555c0b2cd2ad09c89fed767f118c0ee961eec Mon Sep 17 00:00:00 2001
+From: Showta Ishizaki <zakinko@snowrabbit.org>
+Date: Wed, 11 Nov 2026 19:54:27 +0000
+Subject: [PATCH 01/23] NFSD: Add /sys/kernel/debug/nfsd
+
+JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
+
+commit 9fe5ea760e64f04412dbed51645a0dac7220d40a
+Author: Chuck Lever <chuck.lever@oracle.com>
+Date:   Sat, 8 Mar 2025 15:14:37 -0500
+
+    Create a small sandbox under /sys/kernel/debug for experimental NFS
+    server feature settings. There is no API/ABI compatibility guarantee
+    for these settings.
+
+    The only documentation for such settings, if any documentation exists,
+    is in the kernel source code.
+
+    Reviewed-by: Jeff Layton <jlayton@kernel.org>
+    Signed-off-by: Chuck Lever <chuck.lever@oracle.com>
+
+Conflicts: fs/nfsd/Makefile has no localio.o line in RHEL 9; the
+    debugfs.o line is added after flexfilelayout.o.
+
+Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
+---
+ fs/nfsd/Makefile  |  1 +
+ fs/nfsd/debugfs.c | 18 ++++++++++++++++++
+ fs/nfsd/nfsctl.c  |  4 ++++
+ fs/nfsd/nfsd.h    |  8 ++++++++
+ 4 files changed, 31 insertions(+)
+ create mode 100644 fs/nfsd/debugfs.c
+
+diff --git a/fs/nfsd/Makefile b/fs/nfsd/Makefile
+index b8736a8..fb31690 100644
+--- a/fs/nfsd/Makefile
++++ b/fs/nfsd/Makefile
+@@ -23,3 +23,4 @@ nfsd-$(CONFIG_NFSD_PNFS) += nfs4layouts.o
+ nfsd-$(CONFIG_NFSD_BLOCKLAYOUT) += blocklayout.o blocklayoutxdr.o
+ nfsd-$(CONFIG_NFSD_SCSILAYOUT) += blocklayout.o blocklayoutxdr.o
+ nfsd-$(CONFIG_NFSD_FLEXFILELAYOUT) += flexfilelayout.o flexfilelayoutxdr.o
++nfsd-$(CONFIG_DEBUG_FS) += debugfs.o
+diff --git a/fs/nfsd/debugfs.c b/fs/nfsd/debugfs.c
+new file mode 100644
+index 0000000..e913268
+--- /dev/null
++++ b/fs/nfsd/debugfs.c
+@@ -0,0 +1,18 @@
++// SPDX-License-Identifier: GPL-2.0
++
++#include <linux/debugfs.h>
++
++#include "nfsd.h"
++
++static struct dentry *nfsd_top_dir __read_mostly;
++
++void nfsd_debugfs_exit(void)
++{
++	debugfs_remove_recursive(nfsd_top_dir);
++	nfsd_top_dir = NULL;
++}
++
++void nfsd_debugfs_init(void)
++{
++	nfsd_top_dir = debugfs_create_dir("nfsd", NULL);
++}
+diff --git a/fs/nfsd/nfsctl.c b/fs/nfsd/nfsctl.c
+index ba5cd61..0a7903b 100644
+--- a/fs/nfsd/nfsctl.c
++++ b/fs/nfsd/nfsctl.c
+@@ -2351,6 +2351,8 @@ static int __init init_nfsd(void)
+ {
+ 	int retval;
+ 
++	nfsd_debugfs_init();
++
+ 	retval = nfsd4_init_slabs();
+ 	if (retval)
+ 		return retval;
+@@ -2398,6 +2400,7 @@ static int __init init_nfsd(void)
+ 	nfsd4_exit_pnfs();
+ out_free_slabs:
+ 	nfsd4_free_slabs();
++	nfsd_debugfs_exit();
+ 	return retval;
+ }
+ 
+@@ -2414,6 +2417,7 @@ static void __exit exit_nfsd(void)
+ 	nfsd_lockd_shutdown();
+ 	nfsd4_free_slabs();
+ 	nfsd4_exit_pnfs();
++	nfsd_debugfs_exit();
+ }
+ 
+ MODULE_AUTHOR("Olaf Kirch <okir@monad.swb.de>");
+diff --git a/fs/nfsd/nfsd.h b/fs/nfsd/nfsd.h
+index b48fc54..8e19444 100644
+--- a/fs/nfsd/nfsd.h
++++ b/fs/nfsd/nfsd.h
+@@ -152,6 +152,14 @@ void nfsd_reset_versions(struct nfsd_net *nn);
+ int nfsd_create_serv(struct net *net);
+ void nfsd_destroy_serv(struct net *net);
+ 
++#ifdef CONFIG_DEBUG_FS
++void nfsd_debugfs_init(void);
++void nfsd_debugfs_exit(void);
++#else
++static inline void nfsd_debugfs_init(void) {}
++static inline void nfsd_debugfs_exit(void) {}
++#endif
++
+ extern int nfsd_max_blksize;
+ 
+ static inline int nfsd_v4client(struct svc_rqst *rq)
+-- 
+2.55.0
+

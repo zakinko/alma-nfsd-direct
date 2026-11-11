@@ -1,0 +1,26 @@
+name: RHEL 9 nfsd direct I/O backport on AlmaLinux 9
+
+on:
+  push:
+    branches: [main]
+    paths: ['el9/**', '.github/workflows/el9.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: vmactions/almalinux-vm@v1.0.1
+        with:
+          release: "9"
+          mem: 8192
+          cpu: 4
+          usesh: true
+          prepare: sh el9/prepare.sh
+          run: sh el9/build.sh && sh el9/run.sh

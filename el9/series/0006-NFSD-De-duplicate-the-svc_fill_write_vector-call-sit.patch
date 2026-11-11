@@ -1,0 +1,266 @@
+From 615347670a29463eac8d04b6734c0b416f4f30f2 Mon Sep 17 00:00:00 2001
+From: Showta Ishizaki <zakinko@snowrabbit.org>
+Date: Wed, 11 Nov 2026 20:01:00 +0000
+Subject: [PATCH 06/23] NFSD: De-duplicate the svc_fill_write_vector() call
+ sites
+
+JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
+
+commit f2e597353d50f05a600dddbf84a362839cf1c224
+Author: Chuck Lever <chuck.lever@oracle.com>
+Date:   Fri, 9 May 2025 13:39:23 -0400
+
+    All three call sites do the same thing.
+
+    I'm struggling with this a bit, however. struct xdr_buf is an XDR
+    layer object and unmarshaling a WRITE payload is clearly a task
+    intended to be done by the proc and xdr functions, not by VFS. This
+    feels vaguely like a layering violation.
+
+    Signed-off-by: Chuck Lever <chuck.lever@oracle.com>
+
+Conflicts: RHEL 9 nfsd_vfs_write() still builds the iterator with
+    iov_iter_kvec(&iter, WRITE, ...), and nfsd4_write() carried a
+    WARN_ON_ONCE(nvecs > ARRAY_SIZE(rqstp->rq_vec)) that upstream did
+    not have; that check moves into nfsd_vfs_write() with the
+    svc_fill_write_vector() call.
+
+Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
+---
+ fs/nfsd/nfs3proc.c         |  5 +---
+ fs/nfsd/nfs4proc.c         |  8 ++----
+ fs/nfsd/nfsproc.c          |  9 +++----
+ fs/nfsd/vfs.c              | 53 +++++++++++++++++++++++++++++---------
+ fs/nfsd/vfs.h              | 10 +++----
+ include/linux/sunrpc/svc.h |  2 +-
+ net/sunrpc/svc.c           |  4 +--
+ 7 files changed, 55 insertions(+), 36 deletions(-)
+
+diff --git a/fs/nfsd/nfs3proc.c b/fs/nfsd/nfs3proc.c
+index ce9f6b5..e650620 100644
+--- a/fs/nfsd/nfs3proc.c
++++ b/fs/nfsd/nfs3proc.c
+@@ -244,7 +244,6 @@ nfsd3_proc_write(struct svc_rqst *rqstp)
+ 	struct nfsd3_writeargs *argp = rqstp->rq_argp;
+ 	struct nfsd3_writeres *resp = rqstp->rq_resp;
+ 	unsigned long cnt = argp->len;
+-	unsigned int nvecs;
+ 
+ 	dprintk("nfsd: WRITE(3)    %s %d bytes at %Lu%s\n",
+ 				SVCFH_fmt(&argp->fh),
+@@ -259,10 +258,8 @@ nfsd3_proc_write(struct svc_rqst *rqstp)
+ 
+ 	fh_copy(&resp->fh, &argp->fh);
+ 	resp->committed = argp->stable;
+-	nvecs = svc_fill_write_vector(rqstp, &argp->payload);
+-
+ 	resp->status = nfsd_write(rqstp, &resp->fh, argp->offset,
+-				  rqstp->rq_vec, nvecs, &cnt,
++				  &argp->payload, &cnt,
+ 				  resp->committed, resp->verf);
+ 	resp->count = cnt;
+ 	resp->status = nfsd3_map_status(resp->status);
+diff --git a/fs/nfsd/nfs4proc.c b/fs/nfsd/nfs4proc.c
+index bba6b49..6dfc8a7 100644
+--- a/fs/nfsd/nfs4proc.c
++++ b/fs/nfsd/nfs4proc.c
+@@ -1216,7 +1216,6 @@ nfsd4_write(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
+ 	struct nfsd_file *nf = NULL;
+ 	__be32 status = nfs_ok;
+ 	unsigned long cnt;
+-	int nvecs;
+ 
+ 	if (write->wr_offset > (u64)OFFSET_MAX ||
+ 	    write->wr_offset + write->wr_buflen > (u64)OFFSET_MAX)
+@@ -1232,12 +1231,9 @@ nfsd4_write(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
+ 
+ 	write->wr_how_written = write->wr_stable_how;
+ 
+-	nvecs = svc_fill_write_vector(rqstp, &write->wr_payload);
+-	WARN_ON_ONCE(nvecs > ARRAY_SIZE(rqstp->rq_vec));
+-
+ 	status = nfsd_vfs_write(rqstp, &cstate->current_fh, nf,
+-				write->wr_offset, rqstp->rq_vec, nvecs, &cnt,
+-				write->wr_how_written,
++				write->wr_offset, &write->wr_payload,
++				&cnt, write->wr_how_written,
+ 				(__be32 *)write->wr_verifier.data);
+ 	nfsd_file_put(nf);
+ 
+diff --git a/fs/nfsd/nfsproc.c b/fs/nfsd/nfsproc.c
+index ce2308b..04a481c 100644
+--- a/fs/nfsd/nfsproc.c
++++ b/fs/nfsd/nfsproc.c
+@@ -257,17 +257,14 @@ nfsd_proc_write(struct svc_rqst *rqstp)
+ 	struct nfsd_writeargs *argp = rqstp->rq_argp;
+ 	struct nfsd_attrstat *resp = rqstp->rq_resp;
+ 	unsigned long cnt = argp->len;
+-	unsigned int nvecs;
+ 
+ 	dprintk("nfsd: WRITE    %s %u bytes at %d\n",
+ 		SVCFH_fmt(&argp->fh),
+ 		argp->len, argp->offset);
+ 
+-	nvecs = svc_fill_write_vector(rqstp, &argp->payload);
+-
+-	resp->status = nfsd_write(rqstp, fh_copy(&resp->fh, &argp->fh),
+-				  argp->offset, rqstp->rq_vec, nvecs,
+-				  &cnt, NFS_DATA_SYNC, NULL);
++	fh_copy(&resp->fh, &argp->fh);
++	resp->status = nfsd_write(rqstp, &resp->fh, argp->offset,
++				  &argp->payload, &cnt, NFS_DATA_SYNC, NULL);
+ 	if (resp->status == nfs_ok)
+ 		resp->status = fh_getattr(&resp->fh, &resp->stat);
+ 	else if (resp->status == nfserr_jukebox)
+diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
+index f07ffb4..9d74f70 100644
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -1156,11 +1156,27 @@ static int wait_for_concurrent_writes(struct file *file)
+ 	return err;
+ }
+ 
++/**
++ * nfsd_vfs_write - write data to an already-open file
++ * @rqstp: RPC execution context
++ * @fhp: File handle of file to write into
++ * @nf: An open file matching @fhp
++ * @offset: Byte offset of start
++ * @payload: xdr_buf containing the write payload
++ * @cnt: IN: number of bytes to write, OUT: number of bytes actually written
++ * @stable: An NFS stable_how value
++ * @verf: NFS WRITE verifier
++ *
++ * Upon return, caller must invoke fh_put on @fhp.
++ *
++ * Return values:
++ *   An nfsstat value in network byte order.
++ */
+ __be32
+-nfsd_vfs_write(struct svc_rqst *rqstp, struct svc_fh *fhp, struct nfsd_file *nf,
+-				loff_t offset, struct kvec *vec, int vlen,
+-				unsigned long *cnt, int stable,
+-				__be32 *verf)
++nfsd_vfs_write(struct svc_rqst *rqstp, struct svc_fh *fhp,
++	       struct nfsd_file *nf, loff_t offset,
++	       const struct xdr_buf *payload, unsigned long *cnt,
++	       int stable, __be32 *verf)
+ {
+ 	struct nfsd_net		*nn = net_generic(SVC_NET(rqstp), nfsd_net_id);
+ 	struct file		*file = nf->nf_file;
+@@ -1176,6 +1192,7 @@ nfsd_vfs_write(struct svc_rqst *rqstp, struct svc_fh *fhp, struct nfsd_file *nf,
+ 	unsigned int		pflags = current->flags;
+ 	rwf_t			flags = 0;
+ 	bool			restore_flags = false;
++	unsigned int		nvecs;
+ 
+ 	trace_nfsd_write_opened(rqstp, fhp, offset, *cnt);
+ 
+@@ -1204,7 +1221,9 @@ nfsd_vfs_write(struct svc_rqst *rqstp, struct svc_fh *fhp, struct nfsd_file *nf,
+ 	if (stable && !use_wgather)
+ 		flags |= RWF_SYNC;
+ 
+-	iov_iter_kvec(&iter, WRITE, vec, vlen, *cnt);
++	nvecs = svc_fill_write_vector(rqstp, payload);
++	WARN_ON_ONCE(nvecs > ARRAY_SIZE(rqstp->rq_vec));
++	iov_iter_kvec(&iter, WRITE, rqstp->rq_vec, nvecs, *cnt);
+ 	since = READ_ONCE(file->f_wb_err);
+ 	if (verf)
+ 		nfsd_copy_write_verifier(verf, nn);
+@@ -1308,14 +1327,24 @@ __be32 nfsd_read(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 	return err;
+ }
+ 
+-/*
+- * Write data to a file.
+- * The stable flag requests synchronous writes.
+- * N.B. After this call fhp needs an fh_put
++/**
++ * nfsd_write - open a file and write data to it
++ * @rqstp: RPC execution context
++ * @fhp: File handle of file to write into; nfsd_write() may modify it
++ * @offset: Byte offset of start
++ * @payload: xdr_buf containing the write payload
++ * @cnt: IN: number of bytes to write, OUT: number of bytes actually written
++ * @stable: An NFS stable_how value
++ * @verf: NFS WRITE verifier
++ *
++ * Upon return, caller must invoke fh_put on @fhp.
++ *
++ * Return values:
++ *   An nfsstat value in network byte order.
+  */
+ __be32
+ nfsd_write(struct svc_rqst *rqstp, struct svc_fh *fhp, loff_t offset,
+-	   struct kvec *vec, int vlen, unsigned long *cnt, int stable,
++	   const struct xdr_buf *payload, unsigned long *cnt, int stable,
+ 	   __be32 *verf)
+ {
+ 	struct nfsd_file *nf;
+@@ -1327,8 +1356,8 @@ nfsd_write(struct svc_rqst *rqstp, struct svc_fh *fhp, loff_t offset,
+ 	if (err)
+ 		goto out;
+ 
+-	err = nfsd_vfs_write(rqstp, fhp, nf, offset, vec,
+-			vlen, cnt, stable, verf);
++	err = nfsd_vfs_write(rqstp, fhp, nf, offset, payload, cnt,
++			     stable, verf);
+ 	nfsd_file_put(nf);
+ out:
+ 	trace_nfsd_write_done(rqstp, fhp, offset, *cnt);
+diff --git a/fs/nfsd/vfs.h b/fs/nfsd/vfs.h
+index 4496283..48607d2 100644
+--- a/fs/nfsd/vfs.h
++++ b/fs/nfsd/vfs.h
+@@ -127,13 +127,13 @@ bool		nfsd_read_splice_ok(struct svc_rqst *rqstp);
+ __be32		nfsd_read(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 				loff_t offset, unsigned long *count,
+ 				u32 *eof);
+-__be32 		nfsd_write(struct svc_rqst *, struct svc_fh *, loff_t,
+-				struct kvec *, int, unsigned long *,
+-				int stable, __be32 *verf);
++__be32		nfsd_write(struct svc_rqst *rqstp, struct svc_fh *fhp,
++				loff_t offset, const struct xdr_buf *payload,
++				unsigned long *cnt, int stable, __be32 *verf);
+ __be32		nfsd_vfs_write(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 				struct nfsd_file *nf, loff_t offset,
+-				struct kvec *vec, int vlen, unsigned long *cnt,
+-				int stable, __be32 *verf);
++				const struct xdr_buf *payload,
++				unsigned long *cnt, int stable, __be32 *verf);
+ __be32		nfsd_readlink(struct svc_rqst *, struct svc_fh *,
+ 				char *, int *);
+ __be32		nfsd_symlink(struct svc_rqst *, struct svc_fh *,
+diff --git a/include/linux/sunrpc/svc.h b/include/linux/sunrpc/svc.h
+index 53c82ce..c0be173 100644
+--- a/include/linux/sunrpc/svc.h
++++ b/include/linux/sunrpc/svc.h
+@@ -435,7 +435,7 @@ int		   svc_encode_result_payload(struct svc_rqst *rqstp,
+ 					     unsigned int offset,
+ 					     unsigned int length);
+ unsigned int	   svc_fill_write_vector(struct svc_rqst *rqstp,
+-					 struct xdr_buf *payload);
++					 const struct xdr_buf *payload);
+ char		  *svc_fill_symlink_pathname(struct svc_rqst *rqstp,
+ 					     struct kvec *first, void *p,
+ 					     size_t total);
+diff --git a/net/sunrpc/svc.c b/net/sunrpc/svc.c
+index e04cb7c..4256974 100644
+--- a/net/sunrpc/svc.c
++++ b/net/sunrpc/svc.c
+@@ -1716,10 +1716,10 @@ EXPORT_SYMBOL_GPL(svc_encode_result_payload);
+  * Fills in rqstp::rq_vec, and returns the number of elements.
+  */
+ unsigned int svc_fill_write_vector(struct svc_rqst *rqstp,
+-				   struct xdr_buf *payload)
++				   const struct xdr_buf *payload)
+ {
++	const struct kvec *first = payload->head;
+ 	struct page **pages = payload->pages;
+-	struct kvec *first = payload->head;
+ 	struct kvec *vec = rqstp->rq_vec;
+ 	size_t total = payload->len;
+ 	unsigned int i;
+-- 
+2.55.0
+

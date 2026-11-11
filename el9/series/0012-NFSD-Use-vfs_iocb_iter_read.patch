@@ -1,0 +1,57 @@
+From 6a98672088067dd03f96d1d43d1ea716cebf855c Mon Sep 17 00:00:00 2001
+From: Showta Ishizaki <zakinko@snowrabbit.org>
+Date: Wed, 11 Nov 2026 20:03:02 +0000
+Subject: [PATCH 12/23] NFSD: Use vfs_iocb_iter_read()
+
+JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
+
+commit 37fe6f1be50f1f1485407078d7afb456bde642ca
+Author: Chuck Lever <chuck.lever@oracle.com>
+Date:   Fri, 13 Jun 2025 16:08:46 -0400
+
+    Refactor: Enable the use of IOCB flags to control NFSD's individual
+    read operations (when not using splice). This allows the eventual
+    use of atomic, uncached, direct, or asynchronous reads.
+
+    Suggested-by: Christoph Hellwig <hch@infradead.org>
+    Reviewed-by: NeilBrown <neil@brown.name>
+    Reviewed-by: Christoph Hellwig <hch@lst.de>
+    Reviewed-by: Jeff Layton <jlayton@kernel.org>
+    Signed-off-by: Chuck Lever <chuck.lever@oracle.com>
+
+Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
+---
+ fs/nfsd/vfs.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
+index eafbb37..ecf88e4 100644
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -1098,10 +1098,13 @@ __be32 nfsd_iter_read(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ {
+ 	unsigned long v, total;
+ 	struct iov_iter iter;
+-	loff_t ppos = offset;
++	struct kiocb kiocb;
+ 	ssize_t host_err;
+ 	size_t len;
+ 
++	init_sync_kiocb(&kiocb, file);
++	kiocb.ki_pos = offset;
++
+ 	v = 0;
+ 	total = *count;
+ 	while (total) {
+@@ -1116,7 +1119,7 @@ __be32 nfsd_iter_read(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 
+ 	trace_nfsd_read_vector(rqstp, fhp, offset, *count);
+ 	iov_iter_bvec(&iter, ITER_DEST, rqstp->rq_bvec, v, *count);
+-	host_err = vfs_iter_read(file, &iter, &ppos, 0);
++	host_err = vfs_iocb_iter_read(file, &kiocb, &iter);
+ 	return nfsd_finish_read(rqstp, fhp, file, offset, count, eof, host_err);
+ }
+ 
+-- 
+2.55.0
+

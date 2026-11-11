@@ -1,0 +1,106 @@
+From ab72b68283e6661c50dcf0530e2042a5fbabdb32 Mon Sep 17 00:00:00 2001
+From: Showta Ishizaki <zakinko@snowrabbit.org>
+Date: Wed, 11 Nov 2026 20:02:17 +0000
+Subject: [PATCH 07/23] SUNRPC: Convert svc_tcp_sendmsg to use bio_vecs
+ directly
+
+JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
+
+commit 2eb2b93581813b74c7174961126f6ec38eadb5a7
+Author: Chuck Lever <chuck.lever@oracle.com>
+Date:   Wed, 19 Jul 2023 14:31:03 -0400
+
+    Add a helper to convert a whole xdr_buf directly into an array of
+    bio_vecs, then send this array instead of iterating piecemeal over
+    the xdr_buf containing the outbound RPC message.
+
+    Reviewed-by: David Howells <dhowells@redhat.com>
+    Signed-off-by: Chuck Lever <chuck.lever@oracle.com>
+
+Conflicts: Only the xdr_buf_to_bvec() helper is taken.  RHEL 9's
+    svc_tcp_sendmsg() still sends with kernel_sendpage() and is left
+    alone; the helper is needed by the NFSD WRITE path that follows.
+
+Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
+---
+ include/linux/sunrpc/xdr.h |  2 ++
+ net/sunrpc/xdr.c           | 50 ++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 52 insertions(+)
+
+diff --git a/include/linux/sunrpc/xdr.h b/include/linux/sunrpc/xdr.h
+index cbc07d8..2f8dc47 100644
+--- a/include/linux/sunrpc/xdr.h
++++ b/include/linux/sunrpc/xdr.h
+@@ -139,6 +139,8 @@ void	xdr_terminate_string(const struct xdr_buf *, const u32);
+ size_t	xdr_buf_pagecount(const struct xdr_buf *buf);
+ int	xdr_alloc_bvec(struct xdr_buf *buf, gfp_t gfp);
+ void	xdr_free_bvec(struct xdr_buf *buf);
++unsigned int xdr_buf_to_bvec(struct bio_vec *bvec, unsigned int bvec_size,
++			     const struct xdr_buf *xdr);
+ 
+ static inline __be32 *xdr_encode_array(__be32 *p, const void *s, unsigned int len)
+ {
+diff --git a/net/sunrpc/xdr.c b/net/sunrpc/xdr.c
+index b1c2631..acb8180 100644
+--- a/net/sunrpc/xdr.c
++++ b/net/sunrpc/xdr.c
+@@ -165,6 +165,56 @@ xdr_free_bvec(struct xdr_buf *buf)
+ 	buf->bvec = NULL;
+ }
+ 
++/**
++ * xdr_buf_to_bvec - Copy components of an xdr_buf into a bio_vec array
++ * @bvec: bio_vec array to populate
++ * @bvec_size: element count of @bio_vec
++ * @xdr: xdr_buf to be copied
++ *
++ * Returns the number of entries consumed in @bvec.
++ */
++unsigned int xdr_buf_to_bvec(struct bio_vec *bvec, unsigned int bvec_size,
++			     const struct xdr_buf *xdr)
++{
++	const struct kvec *head = xdr->head;
++	const struct kvec *tail = xdr->tail;
++	unsigned int count = 0;
++
++	if (head->iov_len) {
++		bvec_set_virt(bvec++, head->iov_base, head->iov_len);
++		++count;
++	}
++
++	if (xdr->page_len) {
++		unsigned int offset, len, remaining;
++		struct page **pages = xdr->pages;
++
++		offset = offset_in_page(xdr->page_base);
++		remaining = xdr->page_len;
++		while (remaining > 0) {
++			len = min_t(unsigned int, remaining,
++				    PAGE_SIZE - offset);
++			bvec_set_page(bvec++, *pages++, len, offset);
++			remaining -= len;
++			offset = 0;
++			if (unlikely(++count > bvec_size))
++				goto bvec_overflow;
++		}
++	}
++
++	if (tail->iov_len) {
++		bvec_set_virt(bvec, tail->iov_base, tail->iov_len);
++		if (unlikely(++count > bvec_size))
++			goto bvec_overflow;
++	}
++
++	return count;
++
++bvec_overflow:
++	pr_warn_once("%s: bio_vec array overflow\n", __func__);
++	return count - 1;
++}
++
+ /**
+  * xdr_inline_pages - Prepare receive buffer for a large reply
+  * @xdr: xdr_buf into which reply will be placed
+-- 
+2.55.0
+

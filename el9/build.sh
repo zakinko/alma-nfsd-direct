@@ -32,7 +32,14 @@ for p in $S/series/*.patch; do
 	fi
 	git am --abort 2>/dev/null || true
 	if git apply "$p" </dev/null 2>/dev/null; then
-		echo "applied with fuzz: $(basename $p)"
+		echo "applied: $(basename $p)"
+		git add fs net include && ci "$(basename $p)"
+		continue
+	fi
+	# The series is cut against Stream 9 head; an older 9.x kernel can
+	# differ in the lines around a hunk.  Say so when it takes less context.
+	if git apply -C1 "$p" </dev/null 2>/dev/null; then
+		echo "applied with one line of context: $(basename $p)"
 		git add fs net include && ci "$(basename $p)"
 		continue
 	fi

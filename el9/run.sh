@@ -149,10 +149,18 @@ cold() {
 		exportfs -f
 	fi
 	srv_start
-	for x in $FS; do mount -t nfs -o $O $H:/srv/$x /mnt/$x || FAIL "mount $x"; done
+	for x in $FS; do nmount $x || FAIL "mount $x"; done
 	a0=$(arc)
 }
 ntrace() { grep -c "$1" $T/trace; }
+# NFSv4 mounts of the NVMe export sometimes get ESTALE right after nfsd
+# restarts on RHEL 9; flush the export cache once and say so.
+nmount() {
+	mount -t nfs -o $O $H:/srv/$1 /mnt/$1 && return 0
+	echo "RETRY mount $1: $(cat /proc/net/rpc/nfsd.fh/content 2>/dev/null | grep -v '^#' | tr '\n' ';')"
+	exportfs -f; sleep 2
+	mount -t nfs -o $O $H:/srv/$1 /mnt/$1
+}
 
 # Re-importing the pool leaves NFSv4 file handles stale, on the other
 # exports too, so ZFS (which never goes direct in 2.2) runs last, alone,
@@ -170,7 +178,7 @@ elif [ $tr = rdma ]; then
 fi
 for vers in $VERS; do
 	O=vers=$vers,rsize=1048576,wsize=1048576$X
-	for fs in $FS; do mkdir -p /mnt/$fs; mount -t nfs -o $O $H:/srv/$fs /mnt/$fs || FAIL "mount $fs over $tr"; done
+	for fs in $FS; do mkdir -p /mnt/$fs; nmount $fs || FAIL "mount $fs over $tr"; done
 	for mode in $modes; do
 		echo $mode > $D/io_cache_read; echo $mode > $D/io_cache_write
 		for fs in $FS; do

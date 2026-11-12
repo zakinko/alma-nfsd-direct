@@ -19,7 +19,7 @@ case "$(modinfo -n nfsd) $(modinfo -n sunrpc)" in
 *updates/el9/nfsd.ko*updates/el9/sunrpc.ko*) echo "PASS: rebuilt modules are the ones modprobe uses" ;;
 *) FAIL "modprobe does not use the rebuilt modules" ;;
 esac
-grep -q ' xdr_buf_to_bvec$' /proc/kallsyms && echo "PASS: rebuilt sunrpc is loaded" || FAIL "loaded sunrpc lacks xdr_buf_to_bvec"
+grep -qE ' xdr_buf_to_bvec(\s|$)' /proc/kallsyms && echo "PASS: rebuilt sunrpc is loaded" || FAIL "loaded sunrpc lacks xdr_buf_to_bvec"
 dmesg | grep -iE 'disagrees|unknown symbol|taint' | tail -5
 
 D=/sys/kernel/debug/nfsd
@@ -36,15 +36,32 @@ T=/sys/kernel/tracing
 mountpoint -q $T || mount -t tracefs none $T
 echo 1 > $T/events/nfsd/nfsd_read_direct/enable
 echo 1 > $T/events/nfsd/nfsd_write_direct/enable
+echo 1 > $T/events/nfsd/nfsd_write_vector/enable
 echo 1 > $T/events/nfsd/nfsd_file_get_dio_attrs/enable
 
 B=/var/tmp/nd
 mkdir -p $B/img /srv/md /srv/zfs
 for i in 0 1 2 3; do truncate -s 2G $B/img/md$i $B/img/z$i; done
+# The md members.  Loop devices keep the block layer's default DMA alignment of
+# 512 bytes, which no NFS WRITE payload meets (it follows the RPC header in the
+# receive buffer); NVMe asks for 4.  scsi_debug disks ask for 4 as well, so they
+# are used when the module is there.
 md=""
-for i in 0 1 2 3; do md="$md $(losetup --direct-io=on -f --show $B/img/md$i)"; done
+if modprobe scsi_debug add_host=4 per_host_store=1 dev_size_mb=768 2>/dev/null; then
+	udevadm settle
+	md=$(lsscsi 2>/dev/null | awk '/scsi_debug/ { print $NF }')
+	[ -n "$md" ] || md=$(for d in /sys/bus/pseudo/drivers/scsi_debug/adapter*/host*/target*/*/block/*; do echo /dev/${d##*/}; done)
+	echo "md members (scsi_debug): $md"
+fi
+if [ -z "$md" ]; then
+	for i in 0 1 2 3; do md="$md $(losetup --direct-io=on -f --show $B/img/md$i)"; done
+	echo "md members (loop): $md"
+fi
 mdadm --create /dev/md0 --run -l0 -n4 $md
 mkfs.xfs -q /dev/md0 && mount /dev/md0 /srv/md
+echo "md0 dma_alignment: $(cat /sys/block/md0/queue/dma_alignment)"
+: > /srv/md/probe
+xfs_io -c "statx -r -m 0x2000" /srv/md/probe | grep -i dio
 FS="md"
 if modprobe zfs 2>/dev/null; then
 	zpool create -o ashift=12 -O recordsize=1M -O atime=off -m /srv/zfs tank \
@@ -92,6 +109,7 @@ for vers in 3 4.2; do
 			cold; echo > $T/trace
 			dd if=$SRC of=/mnt/$fs/$f bs=1M oflag=direct status=none
 			sync; wc=$(cache $fs $f); wd=$(ntrace nfsd_write_direct)
+			wv=$(ntrace nfsd_write_vector)
 			cold; echo > $T/trace
 			rs=$(dd if=/mnt/$fs/$f bs=1M iflag=direct status=none | sha256sum | cut -d' ' -f1)
 			rc=$(cache $fs $f); rd=$(ntrace nfsd_read_direct)
@@ -99,9 +117,12 @@ for vers in 3 4.2; do
 			dd if=$SRC of=/mnt/$fs/$u bs=12345 count=2000 oflag=direct status=none
 			cold
 			us=$(dd if=/mnt/$fs/$u bs=1M iflag=direct status=none | sha256sum | cut -d' ' -f1)
-			echo "MEASURE $tag: write leaves ${wc}MiB cached, $wd direct WRITE events; read leaves ${rc}MiB cached, $rd direct READ events"
+			echo "MEASURE $tag: write leaves ${wc}MiB cached, $wd direct and $wv buffered WRITE segments; read leaves ${rc}MiB cached, $rd direct READ events"
 			[ "$rs" = "$SUM" ] && echo "PASS $tag: 512MiB read back intact" || FAIL "$tag: data read back differs"
 			[ "$us" = "$USUM" ] && echo "PASS $tag: unaligned writes read back intact" || FAIL "$tag: unaligned writes read back differ"
+			# ZFS 2.2 reports no STATX_DIOALIGN, so nfsd never goes direct on
+			# it, and the ARC delta after export/import is noisy: report only.
+			[ $fs = zfs ] && continue
 			case $mode in
 			2)
 				[ $wc -lt 64 ] && echo "PASS $tag: direct write bypasses the cache" || FAIL "$tag: direct write left ${wc}MiB cached"

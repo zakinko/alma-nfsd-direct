@@ -64,27 +64,35 @@ if modprobe nvmet && modprobe nvme-loop && modprobe nvme-fabrics; then
 	udevadm settle
 	md=$(nvme list -o json | sed -n 's/.*"DevicePath" *: *"\([^"]*\)".*/\1/p' | sort)
 	echo "md members (nvme-loop): $md"
-	for d in $md; do echo "$d dma_alignment: $(cat /sys/block/${d#/dev/}/queue/dma_alignment)"; done
+	for d in $md; do echo "$d dma_alignment: $(cat /sys/block/${d#/dev/}/queue/dma_alignment) lbs: $(cat /sys/block/${d#/dev/}/queue/logical_block_size)"; done
+	# md0 does not inherit the members' DMA alignment on this kernel, so one
+	# namespace carries an XFS of its own to show the direct WRITE path.
+	nv=$(echo $md | awk '{ print $NF }')
+	md=$(echo $md | awk '{ $NF = ""; print }')
+	mkdir -p /srv/nv && mkfs.xfs -q $nv && mount $nv /srv/nv && chmod 777 /srv/nv
+	: > /srv/nv/probe; xfs_io -c "statx -r -m 0x2000" /srv/nv/probe | grep -i dio
 fi
 if [ -z "$md" ]; then
 	for i in 0 1 2 3; do md="$md $(losetup --direct-io=on -f --show $B/img/md$i)"; done
 	echo "md members (loop): $md"
 fi
-mdadm --create /dev/md0 --run -l0 -n4 $md
+mdadm --create /dev/md0 --run -l0 -n$(echo $md | wc -w) $md
 mkfs.xfs -q /dev/md0 && mount /dev/md0 /srv/md
 echo "md0 dma_alignment: $(cat /sys/block/md0/queue/dma_alignment)"
 : > /srv/md/probe
 xfs_io -c "statx -r -m 0x2000" /srv/md/probe | grep -i dio
 FS="md"
+mountpoint -q /srv/nv && FS="md nv"
 if modprobe zfs 2>/dev/null; then
 	zpool create -o ashift=12 -O recordsize=1M -O atime=off -m /srv/zfs tank \
-		$B/img/z0 $B/img/z1 $B/img/z2 $B/img/z3 && FS="md zfs"
+		$B/img/z0 $B/img/z1 $B/img/z2 $B/img/z3 && FS="$FS zfs"
 	zfs version
 fi
 chmod 777 /srv/md /srv/zfs
 cat > /etc/exports <<X
 /srv/md  127.0.0.1(rw,no_root_squash,sync,fsid=1)
 /srv/zfs 127.0.0.1(rw,no_root_squash,sync,fsid=2)
+/srv/nv  127.0.0.1(rw,no_root_squash,sync,fsid=3)
 X
 sed -i 's/^# *threads=.*/threads=16/' /etc/nfs.conf
 systemctl start nfs-server
@@ -105,8 +113,9 @@ cold() {
 	for x in $FS; do umount /mnt/$x; done
 	systemctl stop nfs-server
 	sync; echo 3 > /proc/sys/vm/drop_caches
-	if [ "$FS" != md ]; then
+	if [ "${FS%zfs}" != "$FS" ]; then
 		zpool export tank && zpool import -d $B/img tank || FAIL "pool export/import"
+		exportfs -f
 	fi
 	systemctl start nfs-server
 	for x in $FS; do mount -t nfs -o $O 127.0.0.1:/srv/$x /mnt/$x || FAIL "mount $x"; done
@@ -133,6 +142,8 @@ for vers in 3 4.2; do
 			dd if=$SRC of=/mnt/$fs/$u bs=12345 count=2000 oflag=direct status=none
 			cold
 			us=$(dd if=/mnt/$fs/$u bs=1M iflag=direct status=none | sha256sum | cut -d' ' -f1)
+			ss=$(sha256sum < /srv/$fs/$u | cut -d" " -f1)
+			[ "$ss" = "$USUM" ] && echo "PASS $tag: unaligned writes stored intact on the server" || FAIL "$tag: unaligned writes stored wrong on the server"
 			echo "MEASURE $tag: write leaves ${wc}MiB cached, $wd direct and $wv buffered WRITE segments; read leaves ${rc}MiB cached, $rd direct READ events"
 			[ "$rs" = "$SUM" ] && echo "PASS $tag: 512MiB read back intact" || FAIL "$tag: data read back differs"
 			[ "$us" = "$USUM" ] && echo "PASS $tag: unaligned writes read back intact" || FAIL "$tag: unaligned writes read back differ"

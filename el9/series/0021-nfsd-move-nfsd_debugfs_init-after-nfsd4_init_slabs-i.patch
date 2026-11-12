@@ -1,4 +1,4 @@
-From 7dfe5bb2a32dcbdf8267f3fb9885b309dda57b9a Mon Sep 17 00:00:00 2001
+From 4c44ef5fb23256d57a2c603426a488f0b15c15c3 Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 20:06:51 +0000
 Subject: [PATCH 21/23] nfsd: move nfsd_debugfs_init() after nfsd4_init_slabs()

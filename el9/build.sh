@@ -19,7 +19,7 @@ ls -l kernel-*.src.rpm
 rpm2cpio kernel-*.src.rpm | cpio -idm --quiet 'linux-*.tar.xz'
 T=$(ls linux-*.tar.xz)
 D=${T%.tar.xz}
-tar xJf $T $D/fs/nfsd $D/net/sunrpc $D/include/linux/sunrpc $D/include/trace/misc/fs.h
+tar xJf $T $D/fs/internal.h $D/fs/nfsd $D/net/sunrpc $D/include/linux/sunrpc $D/include/trace/misc/fs.h
 cd $D
 ci() { git -c user.name=ci -c user.email=ci@localhost commit -qm "$1"; }
 git init -q && git add fs net include && ci base

@@ -1,4 +1,4 @@
-From b5dacab963df4f376c81c6380a0aa56b94b2f343 Mon Sep 17 00:00:00 2001
+From 2a50272ffc650284d9f78ea1f34e164c3e68e5f4 Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 20:05:42 +0000
 Subject: [PATCH 18/23] NFSD: Implement NFSD_IO_DIRECT for NFS READ
@@ -84,10 +84,10 @@ index 2898b50..4aa44f7 100644
  
  extern u64 nfsd_io_cache_read __read_mostly;
 diff --git a/fs/nfsd/trace.h b/fs/nfsd/trace.h
-index 0fff4ae..ca24935 100644
+index dc46a73..2c61ade 100644
 --- a/fs/nfsd/trace.h
 +++ b/fs/nfsd/trace.h
-@@ -432,6 +432,7 @@ DEFINE_EVENT(nfsd_io_class, nfsd_##name,	\
+@@ -433,6 +433,7 @@ DEFINE_EVENT(nfsd_io_class, nfsd_##name,	\
  DEFINE_NFSD_IO_EVENT(read_start);
  DEFINE_NFSD_IO_EVENT(read_splice);
  DEFINE_NFSD_IO_EVENT(read_vector);

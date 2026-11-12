@@ -1,4 +1,4 @@
-From c6e8e8e968d5e5c8500ea9a16c74f14412e24fbb Mon Sep 17 00:00:00 2001
+From 2aff1551738c7ccc8a14201d0289f40b9f383765 Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 20:03:33 +0000
 Subject: [PATCH 13/23] NFSD: Use vfs_iocb_iter_write()

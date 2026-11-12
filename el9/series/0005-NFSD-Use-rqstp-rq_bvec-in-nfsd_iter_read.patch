@@ -1,4 +1,4 @@
-From aa166ad3b9e8141f25a66a1c25d792a480a3df7a Mon Sep 17 00:00:00 2001
+From 3ca7af8531485c3276196c4fc609b2056aeb9a0a Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 20:00:21 +0000
 Subject: [PATCH 05/23] NFSD: Use rqstp->rq_bvec in nfsd_iter_read()

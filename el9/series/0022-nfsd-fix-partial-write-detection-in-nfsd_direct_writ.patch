@@ -1,4 +1,4 @@
-From b5172449d3014bcb33a1a60ef92cfb7dfe543a7e Mon Sep 17 00:00:00 2001
+From f816d545aad386d2366f406d9c3030f4ce8737a1 Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 20:07:09 +0000
 Subject: [PATCH 22/23] nfsd: fix partial-write detection in nfsd_direct_write

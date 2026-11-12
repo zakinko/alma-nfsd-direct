@@ -1,6 +1,6 @@
-From 731faf32955c580954093891cc0911e778d3b775 Mon Sep 17 00:00:00 2001
+From 94b7a4c892214c95def853078a60dd595cd9c546 Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
-Date: Wed, 11 Nov 2026 19:58:44 +0000
+Date: Thu, 12 Nov 2026 00:46:18 +0000
 Subject: [PATCH 04/23] NFSD: filecache: add STATX_DIOALIGN and
  STATX_DIO_READ_ALIGN support
 
@@ -29,15 +29,17 @@ Conflicts: RHEL 9 has no STATX_DIO_READ_ALIGN and no dio_read_offset_align
     trace event drops its read_offset_align field.  show_statx_mask()
     lists only the STATX_ flags RHEL 9 defines.  nfsd_file_do_acquire()
     takes a struct svc_fh here, so the context differs.
+    RHEL 9 fs/nfsd/trace.h does not include <trace/misc/fs.h>, which
+    upstream had by then; it is added for show_statx_mask().
 
 Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
 ---
  fs/nfsd/filecache.c     | 32 ++++++++++++++++++++++++++++++++
  fs/nfsd/filecache.h     |  4 ++++
- fs/nfsd/trace.h         | 24 ++++++++++++++++++++++++
+ fs/nfsd/trace.h         | 25 +++++++++++++++++++++++++
  fs/nfsd/vfs.h           |  4 ++++
  include/trace/misc/fs.h | 19 +++++++++++++++++++
- 5 files changed, 83 insertions(+)
+ 5 files changed, 84 insertions(+)
 
 diff --git a/fs/nfsd/filecache.c b/fs/nfsd/filecache.c
 index 74e7f4f..1c726df 100644
@@ -112,10 +114,18 @@ index 3fbec24..6797241 100644
  
  int nfsd_file_cache_init(void);
 diff --git a/fs/nfsd/trace.h b/fs/nfsd/trace.h
-index 8d0162e..0fff4ae 100644
+index 8d0162e..dc46a73 100644
 --- a/fs/nfsd/trace.h
 +++ b/fs/nfsd/trace.h
-@@ -1089,6 +1089,30 @@ TRACE_EVENT(nfsd_file_alloc,
+@@ -11,6 +11,7 @@
+ #include <linux/tracepoint.h>
+ #include <linux/sunrpc/clnt.h>
+ #include <linux/sunrpc/xprt.h>
++#include <trace/misc/fs.h>
+ #include <trace/misc/nfs.h>
+ #include <trace/misc/sunrpc.h>
+ 
+@@ -1089,6 +1090,30 @@ TRACE_EVENT(nfsd_file_alloc,
  	)
  );
  

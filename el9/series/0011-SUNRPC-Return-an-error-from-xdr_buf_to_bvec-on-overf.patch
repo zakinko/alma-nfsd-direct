@@ -1,4 +1,4 @@
-From c288c865f56a8c3cded20dd5157c33a2c436a827 Mon Sep 17 00:00:00 2001
+From 7b5537bc37aa991a7700871ae663b0236ae4a43f Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 20:02:55 +0000
 Subject: [PATCH 11/23] SUNRPC: Return an error from xdr_buf_to_bvec() on

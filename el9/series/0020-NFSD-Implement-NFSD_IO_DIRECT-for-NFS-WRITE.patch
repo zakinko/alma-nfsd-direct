@@ -1,4 +1,4 @@
-From 35e58ba1d9e3805e5696f712238bd281494cdf44 Mon Sep 17 00:00:00 2001
+From 22693ec0a996dc4ffcee0baab4aad770ef1d0349 Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 20:06:50 +0000
 Subject: [PATCH 20/23] NFSD: Implement NFSD_IO_DIRECT for NFS WRITE
@@ -54,10 +54,10 @@ index 00eb1ec..7f44689 100644
  		break;
  	default:
 diff --git a/fs/nfsd/trace.h b/fs/nfsd/trace.h
-index ca24935..7491ec9 100644
+index 2c61ade..89d0283 100644
 --- a/fs/nfsd/trace.h
 +++ b/fs/nfsd/trace.h
-@@ -437,6 +437,8 @@ DEFINE_NFSD_IO_EVENT(read_io_done);
+@@ -438,6 +438,8 @@ DEFINE_NFSD_IO_EVENT(read_io_done);
  DEFINE_NFSD_IO_EVENT(read_done);
  DEFINE_NFSD_IO_EVENT(write_start);
  DEFINE_NFSD_IO_EVENT(write_opened);

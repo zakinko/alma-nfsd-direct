@@ -1,4 +1,4 @@
-From 6a98672088067dd03f96d1d43d1ea716cebf855c Mon Sep 17 00:00:00 2001
+From 5640e84031bcd6324dab7d9f7bfff80acba686fd Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 20:03:02 +0000
 Subject: [PATCH 12/23] NFSD: Use vfs_iocb_iter_read()

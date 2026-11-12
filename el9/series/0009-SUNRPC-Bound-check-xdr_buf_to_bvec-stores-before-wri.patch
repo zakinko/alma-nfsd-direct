@@ -1,4 +1,4 @@
-From 9ed9f06b2b4fc2da37160d06b3f8ed8dc1287e91 Mon Sep 17 00:00:00 2001
+From 1edadc1f858577755c966386848dab2c921d9010 Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 20:02:18 +0000
 Subject: [PATCH 09/23] SUNRPC: Bound-check xdr_buf_to_bvec() stores before

@@ -42,16 +42,29 @@ echo 1 > $T/events/nfsd/nfsd_file_get_dio_attrs/enable
 B=/var/tmp/nd
 mkdir -p $B/img /srv/md /srv/zfs
 for i in 0 1 2 3; do truncate -s 2G $B/img/md$i $B/img/z$i; done
-# The md members.  Loop devices keep the block layer's default DMA alignment of
-# 512 bytes, which no NFS WRITE payload meets (it follows the RPC header in the
-# receive buffer); NVMe asks for 4.  scsi_debug disks ask for 4 as well, so they
-# are used when the module is there.
+# The md members.  Loop and scsi_debug disks keep the block layer's default DMA
+# alignment of 512 bytes, which an NFS WRITE payload does not meet (it follows
+# the RPC header in the receive buffer), so nfsd writes them buffered.  The
+# NVMe host driver asks for less, so the members are NVMe namespaces exported
+# over nvme-loop from files, when the modules are there.
 md=""
-if modprobe scsi_debug add_host=4 per_host_store=1 dev_size_mb=768 2>/dev/null; then
+C=/sys/kernel/config/nvmet
+if modprobe nvmet && modprobe nvme-loop && modprobe nvme-fabrics; then
+	mountpoint -q /sys/kernel/config || mount -t configfs none /sys/kernel/config
+	mkdir -p $C/ports/1 && echo loop > $C/ports/1/addr_trtype
+	for i in 0 1 2 3; do
+		s=$C/subsystems/nd$i
+		mkdir -p $s/namespaces/1
+		echo 1 > $s/attr_allow_any_host
+		echo $B/img/md$i > $s/namespaces/1/device_path
+		echo 1 > $s/namespaces/1/enable
+		ln -s $s $C/ports/1/subsystems/nd$i
+		nvme connect -t loop -n nd$i
+	done
 	udevadm settle
-	md=$(lsscsi 2>/dev/null | awk '/scsi_debug/ { print $NF }')
-	[ -n "$md" ] || md=$(for d in /sys/bus/pseudo/drivers/scsi_debug/adapter*/host*/target*/*/block/*; do echo /dev/${d##*/}; done)
-	echo "md members (scsi_debug): $md"
+	md=$(nvme list -o json | sed -n 's/.*"DevicePath" *: *"\([^"]*\)".*/\1/p' | sort)
+	echo "md members (nvme-loop): $md"
+	for d in $md; do echo "$d dma_alignment: $(cat /sys/block/${d#/dev/}/queue/dma_alignment)"; done
 fi
 if [ -z "$md" ]; then
 	for i in 0 1 2 3; do md="$md $(losetup --direct-io=on -f --show $B/img/md$i)"; done
@@ -87,13 +100,16 @@ arc() { awk '$1 == "data_size" { print int($3 / 1048576) }' /proc/spl/kstat/zfs/
 pc() { fincore -nb -o RES "$1" | awk '{ print int($1 / 1048576) }'; }
 cache() { if [ $1 = zfs ]; then echo $(( $(arc) - a0 )); else pc /srv/$1/$2; fi; }
 cold() {
+	# NFSv4 state keeps files open in nfsd, so the server is stopped before
+	# the pool is exported, and every client mount goes with it.
+	for x in $FS; do umount /mnt/$x; done
+	systemctl stop nfs-server
 	sync; echo 3 > /proc/sys/vm/drop_caches
 	if [ "$FS" != md ]; then
-		umount /mnt/zfs 2>/dev/null; exportfs -ua
-		zpool export tank && zpool import -d $B/img tank
-		exportfs -ra
-		mount -t nfs -o $O 127.0.0.1:/srv/zfs /mnt/zfs
+		zpool export tank && zpool import -d $B/img tank || FAIL "pool export/import"
 	fi
+	systemctl start nfs-server
+	for x in $FS; do mount -t nfs -o $O 127.0.0.1:/srv/$x /mnt/$x || FAIL "mount $x"; done
 	a0=$(arc)
 }
 ntrace() { grep -c "$1" $T/trace; }
@@ -120,6 +136,7 @@ for vers in 3 4.2; do
 			echo "MEASURE $tag: write leaves ${wc}MiB cached, $wd direct and $wv buffered WRITE segments; read leaves ${rc}MiB cached, $rd direct READ events"
 			[ "$rs" = "$SUM" ] && echo "PASS $tag: 512MiB read back intact" || FAIL "$tag: data read back differs"
 			[ "$us" = "$USUM" ] && echo "PASS $tag: unaligned writes read back intact" || FAIL "$tag: unaligned writes read back differ"
+			rm -f /mnt/$fs/$f /mnt/$fs/$u
 			# ZFS 2.2 reports no STATX_DIOALIGN, so nfsd never goes direct on
 			# it, and the ARC delta after export/import is noisy: report only.
 			[ $fs = zfs ] && continue

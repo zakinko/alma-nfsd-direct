@@ -156,9 +156,11 @@ ntrace() { grep -c "$1" $T/trace; }
 # NFSv4 mounts of the NVMe export sometimes get ESTALE right after nfsd
 # restarts on RHEL 9; flush the export cache once and say so.
 nmount() {
-	mount -t nfs -o $O $H:/srv/$1 /mnt/$1 && return 0
-	echo "RETRY mount $1: $(cat /proc/net/rpc/nfsd.fh/content 2>/dev/null | grep -v '^#' | tr '\n' ';')"
-	exportfs -f; sleep 2
+	for i in 1 2 3 4 5; do
+		mount -t nfs -o $O $H:/srv/$1 /mnt/$1 2>/dev/null && return 0
+		echo "RETRY $i mount $1"
+		exportfs -f; sleep 3
+	done
 	mount -t nfs -o $O $H:/srv/$1 /mnt/$1
 }
 
@@ -185,6 +187,7 @@ for vers in $VERS; do
 			f=f$mode-$vers; u=u$mode-$vers
 			tag="$tr v$vers mode=$mode fs=$fs"
 			cold; echo > $T/trace
+			mountpoint -q /mnt/$fs || { FAIL "$tag: not mounted, not measured"; continue; }
 			dd if=$SRC of=/mnt/$fs/$f bs=1M oflag=direct status=none
 			sync; wc=$(cache $fs $f); wd=$(ntrace nfsd_write_direct)
 			wv=$(ntrace nfsd_write_vector)

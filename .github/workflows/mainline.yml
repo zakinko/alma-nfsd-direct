@@ -1,0 +1,25 @@
+name: Upstream nfsd direct I/O on ELRepo kernel-ml
+
+on:
+  push:
+    branches: [main]
+    paths: ['mainline/**', 'el9/run.sh', '.github/workflows/mainline.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Boot AlmaLinux 10 with kernel-ml
+        run: sh mainline/boot.sh
+      - name: Measure
+        run: |
+          cd $W
+          scp -q -i key -P 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $GITHUB_WORKSPACE/el9/run.sh root@127.0.0.1:/root/run.sh
+          $S 'rpm -q kernel-ml; MAINLINE=1 sh /root/run.sh'

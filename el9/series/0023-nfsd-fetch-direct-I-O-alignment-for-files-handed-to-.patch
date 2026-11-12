@@ -1,4 +1,4 @@
-From 868fc41fd49a86f005b458817e92acaf5d690261 Mon Sep 17 00:00:00 2001
+From 36b2fa05323d6c50d8d200894d5566fcd4599aee Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 20:07:10 +0000
 Subject: [PATCH 23/23] nfsd: fetch direct I/O alignment for files handed to

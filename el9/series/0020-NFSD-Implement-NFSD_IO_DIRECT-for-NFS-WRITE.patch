@@ -1,4 +1,4 @@
-From 22693ec0a996dc4ffcee0baab4aad770ef1d0349 Mon Sep 17 00:00:00 2001
+From 5335c93e00dd84be786993657a57dfb5ac22a677 Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 20:06:50 +0000
 Subject: [PATCH 20/23] NFSD: Implement NFSD_IO_DIRECT for NFS WRITE
@@ -34,12 +34,23 @@ Conflicts: RHEL 9 has no IOCB_DONTCACHE, so the buffered prefix and
     covering every segment nfsd_direct_write() issues.  The iterator
     direction is spelled WRITE.
 
+    Upstream checks only the first bvec's offset, which suffices since
+    the block layer stopped requiring every segment of a direct I/O to
+    be a whole number of logical blocks (7eac33186957 "iomap: simplify
+    direct io validity check", 6.18).  RHEL 9's iomap and blkdev
+    direct I/O still call bdev_iter_is_aligned(), and a TCP WRITE
+    payload's first bvec ends at a page boundary that is not a block
+    boundary, so the direct segment failed with -EINVAL.  Check every
+    segment with iov_iter_is_aligned() against the same masks and fall
+    back to buffered I/O when they do not meet them.  The now unused
+    iov_iter_bvec_offset() helper is dropped.
+
 Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
 ---
  fs/nfsd/debugfs.c |   1 +
  fs/nfsd/trace.h   |   2 +
- fs/nfsd/vfs.c     | 141 ++++++++++++++++++++++++++++++++++++++++++++--
- 3 files changed, 139 insertions(+), 5 deletions(-)
+ fs/nfsd/vfs.c     | 138 ++++++++++++++++++++++++++++++++++++++++++++--
+ 3 files changed, 136 insertions(+), 5 deletions(-)
 
 diff --git a/fs/nfsd/debugfs.c b/fs/nfsd/debugfs.c
 index 00eb1ec..7f44689 100644
@@ -67,10 +78,10 @@ index 2c61ade..89d0283 100644
  DEFINE_NFSD_IO_EVENT(write_done);
  
 diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
-index c076d4f..7cbcee6 100644
+index c076d4f..5e3984a 100644
 --- a/fs/nfsd/vfs.c
 +++ b/fs/nfsd/vfs.c
-@@ -1261,6 +1261,130 @@ static int wait_for_concurrent_writes(struct file *file)
+@@ -1261,6 +1261,127 @@ static int wait_for_concurrent_writes(struct file *file)
  	return err;
  }
  
@@ -78,12 +89,6 @@ index c076d4f..7cbcee6 100644
 +	struct iov_iter			iter;
 +	int				flags;
 +};
-+
-+static unsigned long
-+iov_iter_bvec_offset(const struct iov_iter *iter)
-+{
-+	return (unsigned long)(iter->bvec->bv_offset + iter->iov_offset);
-+}
 +
 +static void
 +nfsd_write_dio_seg_init(struct nfsd_write_dio_seg *segment,
@@ -141,11 +146,14 @@ index c076d4f..7cbcee6 100644
 +	/*
 +	 * Check if the bvec iterator is aligned for direct I/O.
 +	 *
-+	 * bvecs generated from RPC receive buffers are contiguous: After
-+	 * the first bvec, all subsequent bvecs start at bv_offset zero
-+	 * (page-aligned). Therefore, only the first bvec is checked.
++	 * This block layer requires each segment of a direct I/O to start
++	 * on the DMA alignment and to be a whole number of logical blocks
++	 * (bdev_iter_is_aligned()).  A WRITE payload received over TCP
++	 * follows the RPC header, so its first bvec usually is not, and
++	 * would fail with -EINVAL rather than fall back.
 +	 */
-+	if (iov_iter_bvec_offset(&segments[nsegs].iter) & (mem_align - 1))
++	if (!iov_iter_is_aligned(&segments[nsegs].iter, mem_align - 1,
++				 offset_align - 1))
 +		goto no_dio;
 +	segments[nsegs].flags |= IOCB_DIRECT;
 +	nsegs++;
@@ -201,7 +209,7 @@ index c076d4f..7cbcee6 100644
  /**
   * nfsd_vfs_write - write data to an already-open file
   * @rqstp: RPC execution context
-@@ -1342,26 +1466,33 @@ nfsd_vfs_write(struct svc_rqst *rqstp, struct svc_fh *fhp,
+@@ -1342,26 +1463,33 @@ nfsd_vfs_write(struct svc_rqst *rqstp, struct svc_fh *fhp,
  		host_err = nvecs;
  		goto out_nfserr;
  	}

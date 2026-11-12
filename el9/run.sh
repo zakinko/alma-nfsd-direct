@@ -144,7 +144,7 @@ cold() {
 	for x in $FS; do umount /mnt/$x; done
 	systemctl stop nfs-server
 	sync; echo 3 > /proc/sys/vm/drop_caches
-	if [ "${FS%zfs}" != "$FS" ]; then
+	if [ "$FS" = zfs ]; then
 		zpool export tank && zpool import -d $B/img tank || FAIL "pool export/import"
 		exportfs -f
 	fi
@@ -154,18 +154,21 @@ cold() {
 }
 ntrace() { grep -c "$1" $T/trace; }
 
+# Re-importing the pool leaves NFSv4 file handles stale, on the other
+# exports too, so ZFS (which never goes direct in 2.2) runs last, alone,
+# over NFSv3.
+ZFS=""
+case "$FS" in *zfs*) ZFS=1; FS=$(echo $FS | sed 's/zfs//'); TRANSPORTS="$TRANSPORTS zfs" ;; esac
 for tr in $TRANSPORTS; do
 ALLFS=$FS
-modes="0 1 2"; H=127.0.0.1; X=""
-if [ $tr = rdma ]; then
+modes="0 1 2"; H=127.0.0.1; X=""; VERS="3 4.2"
+if [ $tr = zfs ]; then
+	FS=zfs; VERS=3; tr=tcp
+elif [ $tr = rdma ]; then
 	modes=2; H=$(ip -o -4 addr show dev "$IF" | awk '{ split($4, a, "/"); print a[1]; exit }')
 	X=,proto=rdma,port=20049
-	FS=$(echo $FS | sed 's/zfs//')
 fi
-for vers in 3 4.2; do
-	# Re-importing the pool leaves NFSv4 file handles stale, and ZFS 2.2
-	# never goes direct: ZFS takes part in the NFSv3 TCP round only.
-	[ $vers = 4.2 ] && FS=$(echo $FS | sed 's/zfs//')
+for vers in $VERS; do
 	O=vers=$vers,rsize=1048576,wsize=1048576$X
 	for fs in $FS; do mkdir -p /mnt/$fs; mount -t nfs -o $O $H:/srv/$fs /mnt/$fs || FAIL "mount $fs over $tr"; done
 	for mode in $modes; do

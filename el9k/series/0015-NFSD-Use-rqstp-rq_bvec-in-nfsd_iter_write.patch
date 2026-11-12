@@ -1,0 +1,59 @@
+From 335eadc88a6b3cb8166d55200ef2a5e92b7f8f45 Mon Sep 17 00:00:00 2001
+From: Showta Ishizaki <zakinko@snowrabbit.org>
+Date: Wed, 11 Nov 2026 20:02:38 +0000
+Subject: [PATCH 15/28] NFSD: Use rqstp->rq_bvec in nfsd_iter_write()
+
+JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
+
+commit 1969823caf163593c82df9f9589074720bed2eea
+Author: Chuck Lever <chuck.lever@oracle.com>
+Date:   Tue, 6 May 2025 16:42:25 -0400
+
+    If we can get rid of all uses of rq_vec, then it can be removed.
+    Replace one use of rqstp::rq_vec with rqstp::rq_bvec.
+
+    The feeling of layering violation grows stronger now that
+    <linux/sunrpc/xdr.h> is included in fs/nfsd/vfs.c.
+
+    Suggested-by: Christoph Hellwig <hch@infradead.org>
+    Signed-off-by: Chuck Lever <chuck.lever@oracle.com>
+
+Conflicts: RHEL 9 svc_rqst has no rq_maxpages; the bvec array is the
+    fixed rq_bvec[RPCSVC_MAXPAGES], so ARRAY_SIZE(rqstp->rq_bvec) is
+    passed.  The iterator direction is spelled WRITE in RHEL 9.  The
+    WARN_ON_ONCE carried over from nfsd4_write() goes with the
+    svc_fill_write_vector() call; xdr_buf_to_bvec() checks the bound.
+
+Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
+---
+ fs/nfsd/vfs.c | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
+index 9d74f7028..c185e6b1d 100644
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -32,6 +32,7 @@
+ #include <linux/exportfs.h>
+ #include <linux/writeback.h>
+ #include <linux/security.h>
++#include <linux/sunrpc/xdr.h>
+ 
+ #include "xdr3.h"
+ 
+@@ -1221,9 +1222,9 @@ nfsd_vfs_write(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 	if (stable && !use_wgather)
+ 		flags |= RWF_SYNC;
+ 
+-	nvecs = svc_fill_write_vector(rqstp, payload);
+-	WARN_ON_ONCE(nvecs > ARRAY_SIZE(rqstp->rq_vec));
+-	iov_iter_kvec(&iter, WRITE, rqstp->rq_vec, nvecs, *cnt);
++	nvecs = xdr_buf_to_bvec(rqstp->rq_bvec, ARRAY_SIZE(rqstp->rq_bvec),
++				payload);
++	iov_iter_bvec(&iter, WRITE, rqstp->rq_bvec, nvecs, *cnt);
+ 	since = READ_ONCE(file->f_wb_err);
+ 	if (verf)
+ 		nfsd_copy_write_verifier(verf, nn);
+-- 
+2.55.0
+

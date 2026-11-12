@@ -1,0 +1,40 @@
+name: RHEL 9 kernel with block-layer prerequisites and nfsd direct I/O
+
+on:
+  push:
+    branches: [main]
+    paths: ['el9k/**', '.github/workflows/el9k.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Boot AlmaLinux 9
+        run: sh mainline/boot.sh
+        env:
+          IMG: https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2
+          UD: el9k/user-data
+          READY: test -f /var/tmp/ready
+      - name: Build the kernel
+        run: |
+          cd $W
+          scp -q -r -i key -P 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $GITHUB_WORKSPACE/el9k $GITHUB_WORKSPACE/el9/run.sh $GITHUB_WORKSPACE/el9/bvec.bt root@127.0.0.1:/root/
+          $S 'sh /root/el9k/build.sh'
+      - name: Reboot into it
+        run: |
+          cd $W
+          $S 'systemctl reboot' || true
+          sleep 30
+          for i in $(seq 1 60); do $S 'uname -r | grep -q -- -nd' && break; sleep 10; done
+          $S 'uname -r'
+      - name: Measure
+        run: |
+          cd $W
+          $S 'EL9K=1 sh /root/run.sh'

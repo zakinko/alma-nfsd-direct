@@ -1,0 +1,68 @@
+From 4523856ed7f0998f7c4c0d8a612141e3e73aad1d Mon Sep 17 00:00:00 2001
+From: Showta Ishizaki <zakinko@snowrabbit.org>
+Date: Wed, 11 Nov 2026 20:04:16 +0000
+Subject: [PATCH 20/28] NFSD: Add array bounds-checking in nfsd_iter_read()
+
+JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
+
+commit ccd608e29b7a73b7bee45b06bfeef088a97c4c92
+Author: Chuck Lever <chuck.lever@oracle.com>
+Date:   Wed, 17 Sep 2025 10:31:40 -0400
+
+    The *count parameter does not appear to be explicitly restricted
+    to being smaller than rsize, so it might be possible to overrun
+    the rq_bvec or rq_pages arrays.
+
+    Rather than overrunning these arrays (damage done!) and then WARNING
+    once, let's harden the loop so that it terminates before the end of
+    the arrays are reached. This should result in a short read, which is
+    OK -- clients recover by sending additional READ requests for the
+    remaining unread bytes.
+
+    Reported-by: NeilBrown <neil@brown.name>
+    Reviewed-by: Jeff Layton <jlayton@kernel.org>
+    Reviewed-by: Mike Snitzer <snitzer@kernel.org>
+    Reviewed-by: NeilBrown <neil@brown.name>
+    Signed-off-by: Chuck Lever <chuck.lever@oracle.com>
+
+Conflicts: RHEL 9 has no rq_maxpages; ARRAY_SIZE(rqstp->rq_bvec) bounds
+    the loop instead.
+
+Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
+---
+ fs/nfsd/vfs.c | 12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
+index e09f2790f..424ceb09a 100644
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -1122,18 +1122,20 @@ __be32 nfsd_iter_read(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 
+ 	v = 0;
+ 	total = *count;
+-	while (total) {
++	while (total && v < ARRAY_SIZE(rqstp->rq_bvec) &&
++	       rqstp->rq_next_page < rqstp->rq_page_end) {
+ 		len = min_t(size_t, total, PAGE_SIZE - base);
+-		bvec_set_page(&rqstp->rq_bvec[v], *(rqstp->rq_next_page++),
++		bvec_set_page(&rqstp->rq_bvec[v], *rqstp->rq_next_page,
+ 			      len, base);
++
+ 		total -= len;
++		++rqstp->rq_next_page;
+ 		++v;
+ 		base = 0;
+ 	}
+-	WARN_ON_ONCE(v > ARRAY_SIZE(rqstp->rq_bvec));
+ 
+-	trace_nfsd_read_vector(rqstp, fhp, offset, *count);
+-	iov_iter_bvec(&iter, ITER_DEST, rqstp->rq_bvec, v, *count);
++	trace_nfsd_read_vector(rqstp, fhp, offset, *count - total);
++	iov_iter_bvec(&iter, ITER_DEST, rqstp->rq_bvec, v, *count - total);
+ 	host_err = vfs_iocb_iter_read(file, &kiocb, &iter);
+ 	return nfsd_finish_read(rqstp, fhp, file, offset, count, eof, host_err);
+ }
+-- 
+2.55.0
+

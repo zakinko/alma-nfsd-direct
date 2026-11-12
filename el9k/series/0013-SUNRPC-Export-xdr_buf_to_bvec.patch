@@ -1,0 +1,36 @@
+From 156cbaa53d678d8a111a8b00612f5a4e1307be9e Mon Sep 17 00:00:00 2001
+From: Showta Ishizaki <zakinko@snowrabbit.org>
+Date: Wed, 11 Nov 2026 20:02:17 +0000
+Subject: [PATCH 13/28] SUNRPC: Export xdr_buf_to_bvec()
+
+JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
+
+commit 62bf165c04bfbba96af85ec649a435e38ff0b5b0
+Author: Chuck Lever <chuck.lever@oracle.com>
+Date:   Thu, 8 May 2025 11:21:17 -0400
+
+    Prepare xdr_buf_to_bvec() to be invoked from upper layer protocol
+    code.
+
+    Signed-off-by: Chuck Lever <chuck.lever@oracle.com>
+
+Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
+---
+ net/sunrpc/xdr.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/net/sunrpc/xdr.c b/net/sunrpc/xdr.c
+index acb818004..aed0fea5a 100644
+--- a/net/sunrpc/xdr.c
++++ b/net/sunrpc/xdr.c
+@@ -214,6 +214,7 @@ unsigned int xdr_buf_to_bvec(struct bio_vec *bvec, unsigned int bvec_size,
+ 	pr_warn_once("%s: bio_vec array overflow\n", __func__);
+ 	return count - 1;
+ }
++EXPORT_SYMBOL_GPL(xdr_buf_to_bvec);
+ 
+ /**
+  * xdr_inline_pages - Prepare receive buffer for a large reply
+-- 
+2.55.0
+

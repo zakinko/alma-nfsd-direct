@@ -1,0 +1,44 @@
+From 4c7fe14f5d2ca70bfcede35ea7ef26189d367368 Mon Sep 17 00:00:00 2001
+From: Showta Ishizaki <zakinko@snowrabbit.org>
+Date: Thu, 12 Nov 2026 06:17:29 +0000
+Subject: [PATCH 04/28] block: simplify direct io validity check
+
+JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
+
+commit 5ff3f74e145adc79b49668adb8de276446acf6be
+Author: Keith Busch <kbusch@kernel.org>
+Date:   Wed, 27 Aug 2025 07:12:54 -0700
+
+    The block layer checks all the segments for validity later, so no need
+    for an early check. Just reduce it to a simple position and total length
+    check, and defer the more invasive segment checks to the block layer.
+
+    Signed-off-by: Keith Busch <kbusch@kernel.org>
+    Reviewed-by: Hannes Reinecke <hare@suse.de>
+    Reviewed-by: Martin K. Petersen <martin.petersen@oracle.com>
+    Reviewed-by: Christoph Hellwig <hch@lst.de>
+    Signed-off-by: Jens Axboe <axboe@kernel.dk>
+
+Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
+---
+ block/fops.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/block/fops.c b/block/fops.c
+index 869db1836..cd09f4983 100644
+--- a/block/fops.c
++++ b/block/fops.c
+@@ -39,8 +39,8 @@ static blk_opf_t dio_bio_write_op(struct kiocb *iocb)
+ static bool blkdev_dio_invalid(struct block_device *bdev, struct kiocb *iocb,
+ 				struct iov_iter *iter)
+ {
+-	return iocb->ki_pos & (bdev_logical_block_size(bdev) - 1) ||
+-		!bdev_iter_is_aligned(bdev, iter);
++	return (iocb->ki_pos | iov_iter_count(iter)) &
++			(bdev_logical_block_size(bdev) - 1);
+ }
+ 
+ #define DIO_INLINE_BIO_VECS 4
+-- 
+2.55.0
+

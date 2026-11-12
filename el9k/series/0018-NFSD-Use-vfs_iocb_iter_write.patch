@@ -1,0 +1,80 @@
+From 4b63efca3a6d9ed196cfa6d2bbc6773030ac3cb1 Mon Sep 17 00:00:00 2001
+From: Showta Ishizaki <zakinko@snowrabbit.org>
+Date: Wed, 11 Nov 2026 20:03:33 +0000
+Subject: [PATCH 18/28] NFSD: Use vfs_iocb_iter_write()
+
+JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
+
+commit 3f3503adb3328e9b2c031ad8d27889ecfa2a6bf7
+Author: Chuck Lever <chuck.lever@oracle.com>
+Date:   Fri, 13 Jun 2025 16:08:47 -0400
+
+    Refactor: Enable the use of IOCB flags to control NFSD's individual
+    write operations. This allows the eventual use of atomic, uncached,
+    direct, or asynchronous writes.
+
+    Suggested-by: NeilBrown <neil@brown.name>
+    Reviewed-by: Christoph Hellwig <hch@lst.de>
+    Reviewed-by: NeilBrown <neil@brown.name>
+    Reviewed-by: Jeff Layton <jlayton@kernel.org>
+    Signed-off-by: Chuck Lever <chuck.lever@oracle.com>
+
+Conflicts: RHEL 9 nfsd_vfs_write() decides write gathering with a local
+    use_wgather rather than fhp->fh_use_wgather, and brackets the write
+    with file_start_write()/file_end_write() because RHEL 9's
+    vfs_iter_write() and vfs_iocb_iter_write() do not take freeze
+    protection themselves; that bracket is kept around
+    vfs_iocb_iter_write().
+
+Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
+---
+ fs/nfsd/vfs.c | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
+index ecf88e465..24a62843c 100644
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -1185,16 +1185,15 @@ nfsd_vfs_write(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 	struct nfsd_net		*nn = net_generic(SVC_NET(rqstp), nfsd_net_id);
+ 	struct file		*file = nf->nf_file;
+ 	struct super_block	*sb = file_inode(file)->i_sb;
++	struct kiocb		kiocb;
+ 	struct svc_export	*exp;
+ 	struct iov_iter		iter;
+ 	errseq_t		since;
+ 	__be32			nfserr;
+ 	int			host_err;
+ 	int			use_wgather;
+-	loff_t			pos = offset;
+ 	unsigned long		exp_op_flags = 0;
+ 	unsigned int		pflags = current->flags;
+-	rwf_t			flags = 0;
+ 	bool			restore_flags = false;
+ 	int			nvecs;
+ 
+@@ -1221,9 +1220,10 @@ nfsd_vfs_write(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 
+ 	if (!EX_ISSYNC(exp))
+ 		stable = NFS_UNSTABLE;
+-
++	init_sync_kiocb(&kiocb, file);
++	kiocb.ki_pos = offset;
+ 	if (stable && !use_wgather)
+-		flags |= RWF_SYNC;
++		kiocb.ki_flags |= IOCB_DSYNC;
+ 
+ 	nvecs = xdr_buf_to_bvec(rqstp->rq_bvec, ARRAY_SIZE(rqstp->rq_bvec),
+ 				payload);
+@@ -1236,7 +1236,7 @@ nfsd_vfs_write(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 	if (verf)
+ 		nfsd_copy_write_verifier(verf, nn);
+ 	file_start_write(file);
+-	host_err = vfs_iter_write(file, &iter, &pos, flags);
++	host_err = vfs_iocb_iter_write(file, &kiocb, &iter);
+ 	file_end_write(file);
+ 	if (host_err < 0) {
+ 		commit_reset_write_verifier(nn, rqstp, host_err);
+-- 
+2.55.0
+

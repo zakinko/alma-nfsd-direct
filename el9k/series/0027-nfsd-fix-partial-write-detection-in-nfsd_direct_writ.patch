@@ -1,0 +1,86 @@
+From 51dfa14c39e6fe55c10e1a8d6828aaaeb4d69217 Mon Sep 17 00:00:00 2001
+From: Showta Ishizaki <zakinko@snowrabbit.org>
+Date: Wed, 11 Nov 2026 20:07:09 +0000
+Subject: [PATCH 27/28] nfsd: fix partial-write detection in nfsd_direct_write
+
+JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
+
+commit 250ec14932d5cfe102f68a57892bb566eee7f83e
+Author: Chris Mason <clm@meta.com>
+Date:   Sat, 30 May 2026 09:19:23 -0400
+
+    nfsd_direct_write() walks a list of write segments and, after each
+    vfs_iocb_iter_write(), tries to detect a short write so the loop can
+    stop before placing the next segment at a wrong file offset:
+
+        host_err = vfs_iocb_iter_write(file, kiocb, &segments[i].iter);
+        if (host_err < 0)
+                return host_err;
+        *cnt += host_err;
+        if (host_err < segments[i].iter.count)
+                break;	/* partial write */
+
+    vfs_iocb_iter_write() runs the iter through ->write_iter(), which
+    advances the iter by the number of bytes written. By the time the
+    check runs, segments[i].iter.count is the residual, not the original
+    request length:
+
+        before write_iter: iter.count == original_len
+        after  write_iter: iter.count == original_len - host_err
+
+    The condition then reduces to host_err < original_len - host_err, so
+    the break fires only when less than half of the segment was written.
+    Any short write completing between 50% and 99% of the segment slips
+    through; the loop advances to the next segment with kiocb->ki_pos
+    only bumped by the short amount, writing the next segment's payload
+    at the wrong offset and over-reporting *cnt to the NFS client.
+
+    Snapshot the segment's byte count before the write and compare
+    host_err against that snapshot so any short write breaks the loop.
+
+    Fixes: 06c5c97293e3 ("NFSD: Implement NFSD_IO_DIRECT for NFS WRITE")
+    Cc: stable@vger.kernel.org
+    Assisted-by: kres:claude-opus-4-7
+    Reported-by: Chris Mason <clm@meta.com>
+    Signed-off-by: Chris Mason <clm@meta.com>
+    Link: https://patch.msgid.link/20260530-nfsd-fixes-v2-7-f27e8eb4d974@kernel.org
+    Signed-off-by: Chuck Lever <chuck.lever@oracle.com>
+
+Conflicts: Context differs because RHEL 9 nfsd_direct_write() has no
+    IOCB_DONTCACHE marking before the write.
+
+Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
+---
+ fs/nfsd/vfs.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
+index 7cbcee6fc..efb6e859d 100644
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -1359,6 +1359,7 @@ nfsd_direct_write(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 	struct file *file = nf->nf_file;
+ 	unsigned int nsegs, i;
+ 	ssize_t host_err;
++	size_t expected;
+ 
+ 	nsegs = nfsd_write_dio_iters_init(nf, rqstp->rq_bvec, nvecs,
+ 					  kiocb, *cnt, segments);
+@@ -1374,11 +1375,13 @@ nfsd_direct_write(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 			trace_nfsd_write_vector(rqstp, fhp, kiocb->ki_pos,
+ 						segments[i].iter.count);
+ 
++		expected = iov_iter_count(&segments[i].iter);
++
+ 		host_err = vfs_iocb_iter_write(file, kiocb, &segments[i].iter);
+ 		if (host_err < 0)
+ 			return host_err;
+ 		*cnt += host_err;
+-		if (host_err < segments[i].iter.count)
++		if (host_err < (ssize_t)expected)
+ 			break;	/* partial write */
+ 	}
+ 
+-- 
+2.55.0
+

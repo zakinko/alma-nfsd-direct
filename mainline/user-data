@@ -6,7 +6,8 @@ ssh_authorized_keys:
 runcmd:
   - dnf -y install epel-release https://www.elrepo.org/elrepo-release-10.el10.elrepo.noarch.rpm
   - dnf -y --enablerepo=elrepo-kernel install kernel-ml kernel-ml-modules-extra
-  - dnf -y install nfs-utils mdadm xfsprogs nvme-cli util-linux rdma-core iproute bpftrace
+  - dnf -y install nfs-utils mdadm xfsprogs nvme-cli util-linux rdma-core iproute
+  - dnf -y install bpftrace || true
   - grubby --set-default "$(ls /boot/vmlinuz-*elrepo* | sort -V | tail -1)"
   - touch /var/tmp/ready
 power_state:

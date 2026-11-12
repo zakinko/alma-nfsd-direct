@@ -1,0 +1,203 @@
+From 77cad56aea1b8d14f5983e426452014fa86097ed Mon Sep 17 00:00:00 2001
+From: Showta Ishizaki <zakinko@snowrabbit.org>
+Date: Thu, 12 Nov 2026 00:46:18 +0000
+Subject: [PATCH 09/28] NFSD: filecache: add STATX_DIOALIGN and
+ STATX_DIO_READ_ALIGN support
+
+JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
+
+commit d11f6cd1bb4a416b4515702d020a7480ac667f0f
+Author: Mike Snitzer <snitzer@kernel.org>
+Date:   Mon, 29 Sep 2025 11:56:41 -0400
+
+    Use STATX_DIOALIGN and STATX_DIO_READ_ALIGN to get DIO alignment
+    attributes from the underlying filesystem and store them in the
+    associated nfsd_file. This is done when the nfsd_file is first
+    opened for each regular file.
+
+    Signed-off-by: Mike Snitzer <snitzer@kernel.org>
+    Reviewed-by: Jeff Layton <jlayton@kernel.org>
+    Reviewed-by: NeilBrown <neil@brown.name>
+    Signed-off-by: Chuck Lever <chuck.lever@oracle.com>
+    Acked-by: Chuck Lever <chuck.lever@oracle.com>
+    Signed-off-by: Anna Schumaker <anna.schumaker@oracle.com>
+
+Conflicts: RHEL 9 has no STATX_DIO_READ_ALIGN and no dio_read_offset_align
+    in struct kstat.  fh_getattr() asks for STATX_DIOALIGN only,
+    nf_dio_read_offset_align is set from dio_offset_align (what upstream
+    does when the filesystem does not report a read alignment), and the
+    trace event drops its read_offset_align field.  show_statx_mask()
+    lists only the STATX_ flags RHEL 9 defines.  nfsd_file_do_acquire()
+    takes a struct svc_fh here, so the context differs.
+    RHEL 9 fs/nfsd/trace.h does not include <trace/misc/fs.h>, which
+    upstream had by then; it is added for show_statx_mask().
+
+Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
+---
+ fs/nfsd/filecache.c     | 32 ++++++++++++++++++++++++++++++++
+ fs/nfsd/filecache.h     |  4 ++++
+ fs/nfsd/trace.h         | 25 +++++++++++++++++++++++++
+ fs/nfsd/vfs.h           |  4 ++++
+ include/trace/misc/fs.h | 19 +++++++++++++++++++
+ 5 files changed, 84 insertions(+)
+
+diff --git a/fs/nfsd/filecache.c b/fs/nfsd/filecache.c
+index 74e7f4f84..1c726dfd7 100644
+--- a/fs/nfsd/filecache.c
++++ b/fs/nfsd/filecache.c
+@@ -222,6 +222,9 @@ nfsd_file_alloc(struct net *net, struct inode *inode, unsigned char need,
+ 	refcount_set(&nf->nf_ref, 1);
+ 	nf->nf_may = need;
+ 	nf->nf_mark = NULL;
++	nf->nf_dio_mem_align = 0;
++	nf->nf_dio_offset_align = 0;
++	nf->nf_dio_read_offset_align = 0;
+ 	return nf;
+ }
+ 
+@@ -963,6 +966,33 @@ nfsd_file_is_cached(struct inode *inode)
+ 	return ret;
+ }
+ 
++static __be32
++nfsd_file_get_dio_attrs(const struct svc_fh *fhp, struct nfsd_file *nf)
++{
++	struct inode *inode = file_inode(nf->nf_file);
++	struct kstat stat;
++	__be32 status;
++
++	/* Currently only need to get DIO alignment info for regular files */
++	if (!S_ISREG(inode->i_mode))
++		return nfs_ok;
++
++	status = fh_getattr(fhp, &stat);
++	if (status != nfs_ok)
++		return status;
++
++	trace_nfsd_file_get_dio_attrs(inode, &stat);
++
++	if (stat.result_mask & STATX_DIOALIGN) {
++		nf->nf_dio_mem_align = stat.dio_mem_align;
++		nf->nf_dio_offset_align = stat.dio_offset_align;
++	}
++	/* This kernel has no STATX_DIO_READ_ALIGN; reads use the write alignment. */
++	nf->nf_dio_read_offset_align = nf->nf_dio_offset_align;
++
++	return nfs_ok;
++}
++
+ static __be32
+ nfsd_file_do_acquire(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 		     unsigned int may_flags, struct file *file,
+@@ -1083,6 +1113,8 @@ nfsd_file_do_acquire(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 			}
+ 			status = nfserrno(ret);
+ 			trace_nfsd_file_open(nf, status);
++			if (status == nfs_ok)
++				status = nfsd_file_get_dio_attrs(fhp, nf);
+ 		}
+ 	} else
+ 		status = nfserr_jukebox;
+diff --git a/fs/nfsd/filecache.h b/fs/nfsd/filecache.h
+index 3fbec24ee..6797241e4 100644
+--- a/fs/nfsd/filecache.h
++++ b/fs/nfsd/filecache.h
+@@ -47,6 +47,10 @@ struct nfsd_file {
+ 	struct list_head	nf_gc;
+ 	struct rcu_head		nf_rcu;
+ 	ktime_t			nf_birthtime;
++
++	u32			nf_dio_mem_align;
++	u32			nf_dio_offset_align;
++	u32			nf_dio_read_offset_align;
+ };
+ 
+ int nfsd_file_cache_init(void);
+diff --git a/fs/nfsd/trace.h b/fs/nfsd/trace.h
+index 8d0162eec..dc46a7359 100644
+--- a/fs/nfsd/trace.h
++++ b/fs/nfsd/trace.h
+@@ -11,6 +11,7 @@
+ #include <linux/tracepoint.h>
+ #include <linux/sunrpc/clnt.h>
+ #include <linux/sunrpc/xprt.h>
++#include <trace/misc/fs.h>
+ #include <trace/misc/nfs.h>
+ #include <trace/misc/sunrpc.h>
+ 
+@@ -1089,6 +1090,30 @@ TRACE_EVENT(nfsd_file_alloc,
+ 	)
+ );
+ 
++TRACE_EVENT(nfsd_file_get_dio_attrs,
++	TP_PROTO(
++		const struct inode *inode,
++		const struct kstat *stat
++	),
++	TP_ARGS(inode, stat),
++	TP_STRUCT__entry(
++		__field(const void *, inode)
++		__field(unsigned long, mask)
++		__field(u32, mem_align)
++		__field(u32, offset_align)
++	),
++	TP_fast_assign(
++		__entry->inode = inode;
++		__entry->mask = stat->result_mask;
++		__entry->mem_align = stat->dio_mem_align;
++		__entry->offset_align = stat->dio_offset_align;
++	),
++	TP_printk("inode=%p flags=%s mem_align=%u offset_align=%u",
++		__entry->inode, show_statx_mask(__entry->mask),
++		__entry->mem_align, __entry->offset_align
++	)
++);
++
+ TRACE_EVENT(nfsd_file_acquire,
+ 	TP_PROTO(
+ 		const struct svc_rqst *rqstp,
+diff --git a/fs/nfsd/vfs.h b/fs/nfsd/vfs.h
+index 7a64e6180..4496283bf 100644
+--- a/fs/nfsd/vfs.h
++++ b/fs/nfsd/vfs.h
+@@ -184,6 +184,10 @@ static inline __be32 fh_getattr(const struct svc_fh *fh, struct kstat *stat)
+ 	u32 request_mask = STATX_BASIC_STATS;
+ 	struct path p = {.mnt = fh->fh_export->ex_path.mnt,
+ 			 .dentry = fh->fh_dentry};
++	struct inode *inode = d_inode(p.dentry);
++
++	if (S_ISREG(inode->i_mode))
++		request_mask |= STATX_DIOALIGN;
+ 
+ 	if (fh->fh_maxsize == NFS4_FHSIZE)
+ 		request_mask |= (STATX_BTIME | STATX_CHANGE_COOKIE);
+diff --git a/include/trace/misc/fs.h b/include/trace/misc/fs.h
+index 738b97f22..13fa1e9d5 100644
+--- a/include/trace/misc/fs.h
++++ b/include/trace/misc/fs.h
+@@ -120,3 +120,22 @@
+ 		{ LOOKUP_BENEATH,	"BENEATH" }, \
+ 		{ LOOKUP_IN_ROOT,	"IN_ROOT" }, \
+ 		{ LOOKUP_CACHED,	"CACHED" })
++
++#define show_statx_mask(flags)					\
++	__print_flags(flags, "|",				\
++		{ STATX_TYPE,		"TYPE" },		\
++		{ STATX_MODE,		"MODE" },		\
++		{ STATX_NLINK,		"NLINK" },		\
++		{ STATX_UID,		"UID" },		\
++		{ STATX_GID,		"GID" },		\
++		{ STATX_ATIME,		"ATIME" },		\
++		{ STATX_MTIME,		"MTIME" },		\
++		{ STATX_CTIME,		"CTIME" },		\
++		{ STATX_INO,		"INO" },		\
++		{ STATX_SIZE,		"SIZE" },		\
++		{ STATX_BLOCKS,		"BLOCKS" },		\
++		{ STATX_BASIC_STATS,	"BASIC_STATS" },	\
++		{ STATX_BTIME,		"BTIME" },		\
++		{ STATX_MNT_ID,		"MNT_ID" },		\
++		{ STATX_DIOALIGN,	"DIOALIGN" },		\
++		{ STATX_WRITE_ATOMIC,	"WRITE_ATOMIC" })
+-- 
+2.55.0
+

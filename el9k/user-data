@@ -1,0 +1,11 @@
+#cloud-config
+disable_root: false
+ssh_pwauth: false
+ssh_authorized_keys:
+  - @KEY@
+growpart:
+  mode: auto
+runcmd:
+  - dnf -y install epel-release dnf-plugins-core
+  - dnf -y install gcc make bison flex elfutils-libelf-devel openssl-devel bc perl dwarves xz cpio git python3 nfs-utils mdadm xfsprogs nvme-cli rdma-core iproute util-linux kernel-modules-extra-$(uname -r)
+  - touch /var/tmp/ready

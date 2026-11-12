@@ -15,9 +15,11 @@ modprobe -r nfsd nfsv4 nfsv3 nfs lockd nfs_acl rpcsec_gss_krb5 auth_rpcgss rpcrd
 lsmod | grep -E '^(sunrpc|nfsd) ' && FAIL "old modules still loaded"
 modprobe nfsd
 for m in sunrpc nfsd rpcrdma; do echo "$m: $(modinfo -n $m)"; done
-# MAINLINE=1: an upstream kernel, nothing rebuilt.  Otherwise the RHEL 9
-# kernel with the series built into sunrpc, rpcrdma and nfsd.
-if [ -z "${MAINLINE:-}" ]; then
+# MAINLINE=1: an upstream kernel, nothing rebuilt.  EL9K=1: a whole RHEL 9
+# kernel rebuilt with the block-layer prerequisites and the series.
+# Otherwise the RHEL 9 kernel with the series built into sunrpc, rpcrdma and
+# nfsd only.
+if [ -z "${MAINLINE:-}" ] && [ -z "${EL9K:-}" ]; then
 	case "$(modinfo -n nfsd) $(modinfo -n sunrpc) $(modinfo -n rpcrdma)" in
 	*updates/el9/nfsd.ko*updates/el9/sunrpc.ko*updates/el9/rpcrdma.ko*) echo "PASS: rebuilt modules are the ones modprobe uses" ;;
 	*) FAIL "modprobe does not use the rebuilt modules" ;;
@@ -226,7 +228,7 @@ for vers in $VERS; do
 				# write to be a whole number of logical blocks; a TCP
 				# payload's first bvec is not, so nfsd writes it buffered.
 				# Upstream since 6.18 checks only the total length.
-				if [ $tr = tcp ] && [ -z "${MAINLINE:-}" ]; then
+				if [ $tr = tcp ] && [ -z "${MAINLINE:-}" ] && [ -z "${EL9K:-}" ]; then
 					echo "INFO $tag: direct write on RHEL 9 over TCP falls back to buffered (${wd} direct segments, ${wc}MiB cached)"
 				else
 					[ $wc -lt 64 ] && [ $wd -gt 0 ] && echo "PASS $tag: direct write bypasses the cache" || FAIL "$tag: direct write left ${wc}MiB cached, $wd direct segments"

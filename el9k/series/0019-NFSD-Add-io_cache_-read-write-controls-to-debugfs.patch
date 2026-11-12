@@ -1,0 +1,240 @@
+From eadb13b51075f0f92d61cda40b655ee98d6d5f78 Mon Sep 17 00:00:00 2001
+From: Showta Ishizaki <zakinko@snowrabbit.org>
+Date: Wed, 11 Nov 2026 20:03:57 +0000
+Subject: [PATCH 19/28] NFSD: Add io_cache_{read,write} controls to debugfs
+
+JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
+
+commit 6304affe45648294229d18cab2b4ba6d40045570
+Author: Mike Snitzer <snitzer@kernel.org>
+Date:   Sat, 6 Sep 2025 17:25:11 -0400
+
+    Add 'io_cache_read' to NFSD's debugfs interface so that any data
+    read by NFSD will either be:
+    - cached using page cache (NFSD_IO_BUFFERED=0)
+    - cached but removed from the page cache upon completion
+      (NFSD_IO_DONTCACHE=1).
+
+    io_cache_read may be set by writing to:
+      /sys/kernel/debug/nfsd/io_cache_read
+
+    Add 'io_cache_write' to NFSD's debugfs interface so that any data
+    written by NFSD will either be:
+    - cached using page cache (NFSD_IO_BUFFERED=0)
+    - cached but removed from the page cache upon completion
+      (NFSD_IO_DONTCACHE=1).
+
+    io_cache_write may be set by writing to:
+      /sys/kernel/debug/nfsd/io_cache_write
+
+    The default value for both settings is NFSD_IO_BUFFERED, which is
+    NFSD's existing behavior for both read and write. Changes to these
+    settings take immediate effect for all exports and NFS versions.
+
+    Currently only xfs and ext4 implement RWF_DONTCACHE. For file
+    systems that do not implement RWF_DONTCACHE, NFSD use only buffered
+    I/O when the io_cache setting is NFSD_IO_DONTCACHE.
+
+    Signed-off-by: Mike Snitzer <snitzer@kernel.org>
+    Reviewed-by: Jeff Layton <jlayton@kernel.org>
+    Signed-off-by: Chuck Lever <chuck.lever@oracle.com>
+
+Conflicts: RHEL 9 has no IOCB_DONTCACHE or FOP_DONTCACHE.  The
+    NFSD_IO_DONTCACHE setting is kept so that the debugfs values match
+    upstream, but it selects buffered I/O, which is what upstream does
+    for a file on a filesystem without FOP_DONTCACHE.  In
+    nfsd_vfs_write() the switch sits before file_start_write(), which
+    RHEL 9 still calls here.
+
+Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
+---
+ fs/nfsd/debugfs.c | 93 +++++++++++++++++++++++++++++++++++++++++++++++
+ fs/nfsd/nfsd.h    |  9 +++++
+ fs/nfsd/vfs.c     | 23 ++++++++++++
+ 3 files changed, 125 insertions(+)
+
+diff --git a/fs/nfsd/debugfs.c b/fs/nfsd/debugfs.c
+index f07d790d5..ed2b9e066 100644
+--- a/fs/nfsd/debugfs.c
++++ b/fs/nfsd/debugfs.c
+@@ -27,11 +27,98 @@ static int nfsd_dsr_get(void *data, u64 *val)
+ static int nfsd_dsr_set(void *data, u64 val)
+ {
+ 	nfsd_disable_splice_read = (val > 0);
++	if (!nfsd_disable_splice_read) {
++		/*
++		 * Must use buffered I/O if splice_read is enabled.
++		 */
++		nfsd_io_cache_read = NFSD_IO_BUFFERED;
++	}
+ 	return 0;
+ }
+ 
+ DEFINE_DEBUGFS_ATTRIBUTE(nfsd_dsr_fops, nfsd_dsr_get, nfsd_dsr_set, "%llu\n");
+ 
++/*
++ * /sys/kernel/debug/nfsd/io_cache_read
++ *
++ * Contents:
++ *   %0: NFS READ will use buffered IO
++ *   %1: NFS READ will use dontcache (buffered IO w/ dropbehind)
++ *
++ * This setting takes immediate effect for all NFS versions,
++ * all exports, and in all NFSD net namespaces.
++ */
++
++static int nfsd_io_cache_read_get(void *data, u64 *val)
++{
++	*val = nfsd_io_cache_read;
++	return 0;
++}
++
++static int nfsd_io_cache_read_set(void *data, u64 val)
++{
++	int ret = 0;
++
++	switch (val) {
++	case NFSD_IO_BUFFERED:
++		nfsd_io_cache_read = NFSD_IO_BUFFERED;
++		break;
++	case NFSD_IO_DONTCACHE:
++		/*
++		 * Must disable splice_read when enabling
++		 * NFSD_IO_DONTCACHE.
++		 */
++		nfsd_disable_splice_read = true;
++		nfsd_io_cache_read = val;
++		break;
++	default:
++		ret = -EINVAL;
++		break;
++	}
++
++	return ret;
++}
++
++DEFINE_DEBUGFS_ATTRIBUTE(nfsd_io_cache_read_fops, nfsd_io_cache_read_get,
++			 nfsd_io_cache_read_set, "%llu\n");
++
++/*
++ * /sys/kernel/debug/nfsd/io_cache_write
++ *
++ * Contents:
++ *   %0: NFS WRITE will use buffered IO
++ *   %1: NFS WRITE will use dontcache (buffered IO w/ dropbehind)
++ *
++ * This setting takes immediate effect for all NFS versions,
++ * all exports, and in all NFSD net namespaces.
++ */
++
++static int nfsd_io_cache_write_get(void *data, u64 *val)
++{
++	*val = nfsd_io_cache_write;
++	return 0;
++}
++
++static int nfsd_io_cache_write_set(void *data, u64 val)
++{
++	int ret = 0;
++
++	switch (val) {
++	case NFSD_IO_BUFFERED:
++	case NFSD_IO_DONTCACHE:
++		nfsd_io_cache_write = val;
++		break;
++	default:
++		ret = -EINVAL;
++		break;
++	}
++
++	return ret;
++}
++
++DEFINE_DEBUGFS_ATTRIBUTE(nfsd_io_cache_write_fops, nfsd_io_cache_write_get,
++			 nfsd_io_cache_write_set, "%llu\n");
++
+ void nfsd_debugfs_exit(void)
+ {
+ 	debugfs_remove_recursive(nfsd_top_dir);
+@@ -44,4 +131,10 @@ void nfsd_debugfs_init(void)
+ 
+ 	debugfs_create_file("disable-splice-read", S_IWUSR | S_IRUGO,
+ 			    nfsd_top_dir, NULL, &nfsd_dsr_fops);
++
++	debugfs_create_file("io_cache_read", 0644, nfsd_top_dir, NULL,
++			    &nfsd_io_cache_read_fops);
++
++	debugfs_create_file("io_cache_write", 0644, nfsd_top_dir, NULL,
++			    &nfsd_io_cache_write_fops);
+ }
+diff --git a/fs/nfsd/nfsd.h b/fs/nfsd/nfsd.h
+index 77ae29dd9..2898b5078 100644
+--- a/fs/nfsd/nfsd.h
++++ b/fs/nfsd/nfsd.h
+@@ -162,6 +162,15 @@ static inline void nfsd_debugfs_exit(void) {}
+ 
+ extern bool nfsd_disable_splice_read __read_mostly;
+ 
++enum {
++	/* Any new NFSD_IO enum value must be added at the end */
++	NFSD_IO_BUFFERED,
++	NFSD_IO_DONTCACHE,
++};
++
++extern u64 nfsd_io_cache_read __read_mostly;
++extern u64 nfsd_io_cache_write __read_mostly;
++
+ extern int nfsd_max_blksize;
+ 
+ static inline int nfsd_v4client(struct svc_rqst *rq)
+diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
+index 24a62843c..e09f2790f 100644
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -51,6 +51,8 @@
+ #define NFSDDBG_FACILITY		NFSDDBG_FILEOP
+ 
+ bool nfsd_disable_splice_read __read_mostly;
++u64 nfsd_io_cache_read __read_mostly = NFSD_IO_BUFFERED;
++u64 nfsd_io_cache_write __read_mostly = NFSD_IO_BUFFERED;
+ 
+ /**
+  * nfserrno - Map Linux errnos to NFS errnos
+@@ -1103,6 +1105,19 @@ __be32 nfsd_iter_read(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 	size_t len;
+ 
+ 	init_sync_kiocb(&kiocb, file);
++
++	switch (nfsd_io_cache_read) {
++	case NFSD_IO_BUFFERED:
++		break;
++	case NFSD_IO_DONTCACHE:
++		/*
++		 * No filesystem in this kernel supports IOCB_DONTCACHE, so
++		 * this is buffered I/O, as it is upstream for a filesystem
++		 * without FOP_DONTCACHE.
++		 */
++		break;
++	}
++
+ 	kiocb.ki_pos = offset;
+ 
+ 	v = 0;
+@@ -1235,6 +1250,14 @@ nfsd_vfs_write(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 	since = READ_ONCE(file->f_wb_err);
+ 	if (verf)
+ 		nfsd_copy_write_verifier(verf, nn);
++
++	switch (nfsd_io_cache_write) {
++	case NFSD_IO_BUFFERED:
++		break;
++	case NFSD_IO_DONTCACHE:
++		/* Buffered I/O here; see nfsd_iter_read(). */
++		break;
++	}
+ 	file_start_write(file);
+ 	host_err = vfs_iocb_iter_write(file, &kiocb, &iter);
+ 	file_end_write(file);
+-- 
+2.55.0
+

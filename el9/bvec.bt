@@ -1,0 +1,15 @@
+// The iterator nfsd hands to vfs_iocb_iter_write(): whether it is direct,
+// and the first two bvecs, which show where the WRITE payload sits in the
+// receive pages.
+kprobe:vfs_iocb_iter_write /comm == "nfsd" && @n < 8/
+{
+	$k = (struct kiocb *)arg1;
+	$i = (struct iov_iter *)arg2;
+	printf("BVEC pos=%lld count=%lu direct=%d nr_segs=%lu skip=%lu bv0=%u+%u bv1=%u+%u\n",
+	       $k->ki_pos, $i->count, ($k->ki_flags & (1 << 17)) ? 1 : 0,
+	       $i->nr_segs, $i->iov_offset,
+	       $i->bvec[0].bv_offset, $i->bvec[0].bv_len,
+	       $i->bvec[1].bv_offset, $i->bvec[1].bv_len);
+	@n++;
+}
+END { clear(@n); }

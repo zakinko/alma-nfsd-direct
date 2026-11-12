@@ -188,7 +188,16 @@ for vers in $VERS; do
 			tag="$tr v$vers mode=$mode fs=$fs"
 			cold; echo > $T/trace
 			mountpoint -q /mnt/$fs || { FAIL "$tag: not mounted, not measured"; continue; }
+			bt=""
+			if [ $mode = 2 ] && [ $vers = 3 ] && [ $fs != zfs ] && command -v bpftrace >/dev/null; then
+				bpftrace $(dirname $0)/bvec.bt > $B/bt.out 2>&1 & bt=$!
+				sleep 5
+			fi
 			dd if=$SRC of=/mnt/$fs/$f bs=1M oflag=direct status=none
+			if [ -n "$bt" ]; then
+				kill -INT $bt; wait $bt
+				sed "s/^/$tag: /" $B/bt.out | grep BVEC
+			fi
 			sync; wc=$(cache $fs $f); wd=$(ntrace nfsd_write_direct)
 			wv=$(ntrace nfsd_write_vector)
 			cold; echo > $T/trace

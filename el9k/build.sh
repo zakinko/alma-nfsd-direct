@@ -33,7 +33,8 @@ lsmod > $W/lsmod
 yes '' | make -s LSMOD=$W/lsmod localmodconfig >/dev/null
 scripts/config -d MODULE_SIG -d MODULE_SIG_ALL -d DEBUG_INFO_BTF \
 	--set-str SYSTEM_TRUSTED_KEYS "" --set-str SYSTEM_REVOCATION_KEYS "" \
-	-d DEBUG_INFO -e DEBUG_INFO_NONE --set-str LOCALVERSION "-nd"
+	-d DEBUG_INFO -e DEBUG_INFO_NONE --set-str LOCALVERSION "-nd" \
+	--set-str EFI_SBAT_FILE ""
 make -s olddefconfig
 grep -E '^CONFIG_(NFSD|SUNRPC_XPRT_RDMA|RDMA_RXE|NVME_TARGET_LOOP|XFS_FS|MD_RAID0|BLK_DEV_MD)=' .config
 time make -s -j$(nproc) bzImage modules

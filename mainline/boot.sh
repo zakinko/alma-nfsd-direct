@@ -25,7 +25,11 @@ for i in $(seq 1 120); do
 	if $S "$READY" 2>/dev/null; then ok=1; break; fi
 	sleep 10
 done
-[ -n "$ok" ] || { tail -50 $W/serial.log; exit 1; }
+[ -n "$ok" ] || {
+	grep -aE "Linux version|runcmd|Error|Failed" $W/serial.log | tail -30
+	$S 'uname -r; cloud-init status --long; tail -30 /var/log/cloud-init-output.log' || true
+	exit 1
+}
 echo "booted $($S uname -r)"
 echo "S=$S" >> $GITHUB_ENV
 echo "W=$W" >> $GITHUB_ENV

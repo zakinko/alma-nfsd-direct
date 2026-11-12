@@ -61,6 +61,11 @@ if modprobe nvmet && modprobe nvme-loop && modprobe nvme-fabrics; then
 		mkdir -p $s/namespaces/1
 		echo 1 > $s/attr_allow_any_host
 		echo $B/img/md$i > $s/namespaces/1/device_path
+		# The file backend otherwise writes the image with O_DIRECT, which
+		# imposes the VM disk's 512-byte DMA alignment on a namespace that
+		# advertises 4 bytes: buffers that a real NVMe drive takes then
+		# fail with EIO underneath XFS.
+		echo 1 > $s/namespaces/1/buffered_io
 		echo 1 > $s/namespaces/1/enable
 		ln -s $s $C/ports/1/subsystems/nd$i
 		nvme connect -t loop -n nd$i
@@ -158,6 +163,9 @@ if [ $tr = rdma ]; then
 	FS=$(echo $FS | sed 's/zfs//')
 fi
 for vers in 3 4.2; do
+	# Re-importing the pool leaves NFSv4 file handles stale, and ZFS 2.2
+	# never goes direct: ZFS takes part in the NFSv3 TCP round only.
+	[ $vers = 4.2 ] && FS=$(echo $FS | sed 's/zfs//')
 	O=vers=$vers,rsize=1048576,wsize=1048576$X
 	for fs in $FS; do mkdir -p /mnt/$fs; mount -t nfs -o $O $H:/srv/$fs /mnt/$fs || FAIL "mount $fs over $tr"; done
 	for mode in $modes; do
@@ -199,6 +207,15 @@ for vers in 3 4.2; do
 					echo "INFO $tag: direct write on RHEL 9 over TCP falls back to buffered (${wd} direct segments, ${wc}MiB cached)"
 				else
 					[ $wc -lt 64 ] && [ $wd -gt 0 ] && echo "PASS $tag: direct write bypasses the cache" || FAIL "$tag: direct write left ${wc}MiB cached, $wd direct segments"
+				fi
+				;;
+			1)
+				# Upstream drops the pages behind a dontcache read; RHEL 9
+				# has no dontcache, so value 1 is buffered there.
+				if [ -n "${MAINLINE:-}" ]; then
+					[ $rc -lt 64 ] && echo "PASS $tag: dontcache read leaves the cache empty" || FAIL "$tag: dontcache read left ${rc}MiB cached"
+				else
+					[ $rc -ge 256 ] && echo "PASS $tag: buffered read fills the cache" || FAIL "$tag: buffered read left only ${rc}MiB cached"
 				fi
 				;;
 			*)

@@ -1,7 +1,7 @@
 From 7174fa95eeea6eb3ec2656beca4c8ae5cdeb3b9d Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Thu, 12 Nov 2026 06:17:30 +0000
-Subject: [PATCH 05/28] iomap: simplify direct io validity check
+Subject: [PATCH 05/37] iomap: simplify direct io validity check
 
 JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
 

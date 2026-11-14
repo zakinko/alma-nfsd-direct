@@ -1,7 +1,7 @@
-From eadb13b51075f0f92d61cda40b655ee98d6d5f78 Mon Sep 17 00:00:00 2001
+From 50294152339667f907b33d716b018ae758e7bff6 Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 20:03:57 +0000
-Subject: [PATCH 19/28] NFSD: Add io_cache_{read,write} controls to debugfs
+Subject: [PATCH 27/37] NFSD: Add io_cache_{read,write} controls to debugfs
 
 JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
 

@@ -1,0 +1,92 @@
+From 79e1ba4221778e14246a29e880b13d2c6627005e Mon Sep 17 00:00:00 2001
+From: Showta Ishizaki <zakinko@snowrabbit.org>
+Date: Sat, 14 Nov 2026 06:06:58 +0000
+Subject: [PATCH 37/37] nfsd: keep direct I/O within the device's memory
+ alignment
+
+JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
+
+Upstream Status: RHEL-only
+
+nfsd_direct_read() rounds the range it reads to dio_offset_align
+alone. The bvecs it builds start on page boundaries, but the last one
+ends where the range ends, so when a device's DMA alignment is larger
+than its logical block size the last bvec has a length the device
+cannot take, the block layer refuses the bio with -EINVAL, and the
+client sees NFS4ERR_SERVERFAULT for a READ that buffered I/O would
+have served. Round the range to the larger of the two alignments.
+
+nfsd_write_dio_iters_init() decides whether the middle segment can go
+direct by testing the offset of its first bvec only, which misses the
+length of the last bvec in the same configuration. Test the whole
+iterator with iov_iter_alignment() and write the request buffered
+when it does not meet the alignment.
+
+Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
+---
+ fs/nfsd/vfs.c | 27 ++++++++++++++-------------
+ 1 file changed, 14 insertions(+), 13 deletions(-)
+
+diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
+index efb6e859d..a1396b4f5 100644
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -1096,6 +1096,7 @@ nfsd_direct_read(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 		 struct nfsd_file *nf, loff_t offset, unsigned long *count,
+ 		 u32 *eof)
+ {
++	u32 align = max(nf->nf_dio_read_offset_align, nf->nf_dio_mem_align);
+ 	u64 dio_start, dio_end;
+ 	unsigned long v, total;
+ 	struct iov_iter iter;
+@@ -1106,9 +1107,14 @@ nfsd_direct_read(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 	init_sync_kiocb(&kiocb, nf->nf_file);
+ 	kiocb.ki_flags |= IOCB_DIRECT;
+ 
+-	/* Read a properly-aligned region of bytes into rq_bvec */
+-	dio_start = round_down(offset, nf->nf_dio_read_offset_align);
+-	dio_end = round_up((u64)offset + *count, nf->nf_dio_read_offset_align);
++	/*
++	 * Read a properly-aligned region of bytes into rq_bvec.  The pages
++	 * start on page boundaries, but the last bvec ends where the range
++	 * does, so the range must also be a multiple of the memory
++	 * alignment, which a device may set above its logical block size.
++	 */
++	dio_start = round_down(offset, align);
++	dio_end = round_up((u64)offset + *count, align);
+ 
+ 	kiocb.ki_pos = dio_start;
+ 
+@@ -1266,12 +1272,6 @@ struct nfsd_write_dio_seg {
+ 	int				flags;
+ };
+ 
+-static unsigned long
+-iov_iter_bvec_offset(const struct iov_iter *iter)
+-{
+-	return (unsigned long)(iter->bvec->bv_offset + iter->iov_offset);
+-}
+-
+ static void
+ nfsd_write_dio_seg_init(struct nfsd_write_dio_seg *segment,
+ 			struct bio_vec *bvec, unsigned int nvecs,
+@@ -1328,11 +1328,12 @@ nfsd_write_dio_iters_init(struct nfsd_file *nf, struct bio_vec *bvec,
+ 	/*
+ 	 * Check if the bvec iterator is aligned for direct I/O.
+ 	 *
+-	 * bvecs generated from RPC receive buffers are contiguous: After
+-	 * the first bvec, all subsequent bvecs start at bv_offset zero
+-	 * (page-aligned). Therefore, only the first bvec is checked.
++	 * Every bvec of the middle segment has to meet the memory alignment,
++	 * in its length as well as its offset.  Testing the first bvec alone
++	 * misses a last bvec whose length is off when the memory alignment
++	 * exceeds offset_align.
+ 	 */
+-	if (iov_iter_bvec_offset(&segments[nsegs].iter) & (mem_align - 1))
++	if (iov_iter_alignment(&segments[nsegs].iter) & (mem_align - 1))
+ 		goto no_dio;
+ 	segments[nsegs].flags |= IOCB_DIRECT;
+ 	nsegs++;
+-- 
+2.55.0
+

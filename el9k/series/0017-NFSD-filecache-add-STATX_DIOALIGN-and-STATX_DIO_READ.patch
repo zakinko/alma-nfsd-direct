@@ -1,7 +1,7 @@
-From 77cad56aea1b8d14f5983e426452014fa86097ed Mon Sep 17 00:00:00 2001
+From 4ae9081c4518c655bf5eb50099ac85b7734a5f2b Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Thu, 12 Nov 2026 00:46:18 +0000
-Subject: [PATCH 09/28] NFSD: filecache: add STATX_DIOALIGN and
+Subject: [PATCH 17/37] NFSD: filecache: add STATX_DIOALIGN and
  STATX_DIO_READ_ALIGN support
 
 JIRA: https://issues.redhat.com/browse/RHEL-XXXXX

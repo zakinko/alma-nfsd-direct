@@ -1,7 +1,7 @@
-From a4d1e226ad5caf6a3443e9db5d569387d3a95883 Mon Sep 17 00:00:00 2001
+From 93adadc1b2416109cc0a8c627c08d0f671ee370d Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 20:07:10 +0000
-Subject: [PATCH 28/28] nfsd: fetch direct I/O alignment for files handed to
+Subject: [PATCH 36/37] nfsd: fetch direct I/O alignment for files handed to
  the filecache
 
 JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
@@ -37,7 +37,6 @@ Date:   Tue, 8 Sep 2026 12:34:46 -0400
 
     Fixes: d11f6cd1bb4a ("NFSD: filecache: add STATX_DIOALIGN and STATX_DIO_READ_ALIGN support")
     Cc: stable@vger.kernel.org
-    Assisted-by: Claude:claude-fable-5.1
     Signed-off-by: David Flynn <david.flynn@hammerspace.com>
     Signed-off-by: Mike Snitzer <snitzer@kernel.org>
     Link: https://patch.msgid.link/20260908163448.30841-4-snitzer@kernel.org

@@ -28,7 +28,7 @@ done
 cp /boot/config-$K .config
 # The modules the test uses, loaded so that localmodconfig keeps them.
 for m in nfsd nfs nfsv3 nfsv4 rpcrdma rdma_rxe nvmet nvme_loop nvme_fabrics \
-	 xfs raid0 md_mod loop configfs ib_core rdma_ucm; do modprobe $m 2>/dev/null || true; done
+	 xfs raid0 raid1 md_mod dm_mod dm_mirror loop configfs ib_core rdma_ucm; do modprobe $m 2>/dev/null || true; done
 lsmod > $W/lsmod
 yes '' | make -s LSMOD=$W/lsmod localmodconfig >/dev/null
 scripts/config -d MODULE_SIG -d MODULE_SIG_ALL -d DEBUG_INFO_BTF \
@@ -36,7 +36,7 @@ scripts/config -d MODULE_SIG -d MODULE_SIG_ALL -d DEBUG_INFO_BTF \
 	-d DEBUG_INFO -e DEBUG_INFO_NONE --set-str LOCALVERSION "-nd" \
 	--set-str EFI_SBAT_FILE ""
 make -s olddefconfig
-grep -E '^CONFIG_(NFSD|SUNRPC_XPRT_RDMA|RDMA_RXE|NVME_TARGET_LOOP|XFS_FS|MD_RAID0|BLK_DEV_MD)=' .config
+grep -E '^CONFIG_(NFSD|SUNRPC_XPRT_RDMA|RDMA_RXE|NVME_TARGET_LOOP|XFS_FS|MD_RAID0|MD_RAID1|BLK_DEV_MD|BLK_DEV_DM|DM_MIRROR)=' .config
 time make -s -j$(nproc) bzImage modules
 make -s modules_install
 make -s install

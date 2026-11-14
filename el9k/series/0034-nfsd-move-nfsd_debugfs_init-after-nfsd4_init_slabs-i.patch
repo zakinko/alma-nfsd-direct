@@ -1,7 +1,7 @@
-From 44cd24c3b6ade7fdf711bc9ab075486d28f7e5b9 Mon Sep 17 00:00:00 2001
+From ff32eb7fb5dc8945dc32e8faafeec3e8ddf0e8ea Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 20:06:51 +0000
-Subject: [PATCH 26/28] nfsd: move nfsd_debugfs_init() after nfsd4_init_slabs()
+Subject: [PATCH 34/37] nfsd: move nfsd_debugfs_init() after nfsd4_init_slabs()
  in init_nfsd()
 
 JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
@@ -27,7 +27,6 @@ Date:   Thu, 11 Jun 2026 16:01:00 -0400
 
     Fixes: 9fe5ea760e64 ("NFSD: Add /sys/kernel/debug/nfsd")
     Cc: stable@vger.kernel.org
-    Assisted-by: Claude:claude-opus-4-8
     Signed-off-by: Jeff Layton <jlayton@kernel.org>
     Link: https://patch.msgid.link/20260611-nfsd-testing-v2-17-5b90e276f2d9@kernel.org
     Signed-off-by: Chuck Lever <cel@kernel.org>

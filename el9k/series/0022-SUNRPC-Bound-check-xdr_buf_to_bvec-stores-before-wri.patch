@@ -1,7 +1,7 @@
-From 06d688573960d788368c65c419d83a019043c147 Mon Sep 17 00:00:00 2001
+From 40ad0c94290344915b8ff142bb3c4b6d91fd4614 Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 20:02:18 +0000
-Subject: [PATCH 14/28] SUNRPC: Bound-check xdr_buf_to_bvec() stores before
+Subject: [PATCH 22/37] SUNRPC: Bound-check xdr_buf_to_bvec() stores before
  writing
 
 JIRA: https://issues.redhat.com/browse/RHEL-XXXXX

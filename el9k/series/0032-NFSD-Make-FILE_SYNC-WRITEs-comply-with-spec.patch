@@ -1,7 +1,7 @@
-From a311b5ef1e1836de1f42cbb476152750aedfb182 Mon Sep 17 00:00:00 2001
+From 9d48db8eb77564069472d7dd3b20b324b6890fa3 Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 20:05:58 +0000
-Subject: [PATCH 24/28] NFSD: Make FILE_SYNC WRITEs comply with spec
+Subject: [PATCH 32/37] NFSD: Make FILE_SYNC WRITEs comply with spec
 
 JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
 

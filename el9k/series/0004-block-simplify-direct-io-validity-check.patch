@@ -1,7 +1,7 @@
 From 4c7fe14f5d2ca70bfcede35ea7ef26189d367368 Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Thu, 12 Nov 2026 06:17:29 +0000
-Subject: [PATCH 04/28] block: simplify direct io validity check
+Subject: [PATCH 04/37] block: simplify direct io validity check
 
 JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
 

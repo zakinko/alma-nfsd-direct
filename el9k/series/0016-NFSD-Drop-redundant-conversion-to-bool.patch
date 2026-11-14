@@ -1,7 +1,7 @@
-From e49d3cda84bef4c556b4f4402e38c2b088ee5ded Mon Sep 17 00:00:00 2001
+From a2aa617b99cfdef658eec248d93e7e769fd79d4c Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 19:57:29 +0000
-Subject: [PATCH 08/28] NFSD: Drop redundant conversion to bool
+Subject: [PATCH 16/37] NFSD: Drop redundant conversion to bool
 
 JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
 

@@ -1,7 +1,7 @@
-From 5b12249f49977cffc7bb54974f847efaeb165187 Mon Sep 17 00:00:00 2001
+From 40ca541241b313eaafb1af0fcda3ecf677bc7579 Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 20:05:42 +0000
-Subject: [PATCH 23/28] NFSD: Implement NFSD_IO_DIRECT for NFS READ
+Subject: [PATCH 31/37] NFSD: Implement NFSD_IO_DIRECT for NFS READ
 
 JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
 

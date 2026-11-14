@@ -1,7 +1,7 @@
-From b02d36211a5a3d63163b2bb4c6d767e9bde38d61 Mon Sep 17 00:00:00 2001
+From 6df8798e4003b1acceff76011a422ee118bb3a78 Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 20:03:02 +0000
-Subject: [PATCH 17/28] NFSD: Use vfs_iocb_iter_read()
+Subject: [PATCH 25/37] NFSD: Use vfs_iocb_iter_read()
 
 JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
 

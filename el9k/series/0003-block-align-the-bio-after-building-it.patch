@@ -1,7 +1,7 @@
 From c7f59967b613299c359c9da2fa0cd9c29b106f0f Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Thu, 12 Nov 2026 06:17:29 +0000
-Subject: [PATCH 03/28] block: align the bio after building it
+Subject: [PATCH 03/37] block: align the bio after building it
 
 JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
 

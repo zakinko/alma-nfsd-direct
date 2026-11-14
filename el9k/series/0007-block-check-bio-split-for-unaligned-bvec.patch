@@ -1,0 +1,50 @@
+From 7417d21d3033d4471dece78a5e77bbaef17e23d7 Mon Sep 17 00:00:00 2001
+From: Showta Ishizaki <zakinko@snowrabbit.org>
+Date: Sat, 14 Nov 2026 03:21:34 +0000
+Subject: [PATCH 07/37] block: check bio split for unaligned bvec
+
+JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
+
+commit 9b0c3673c88588d613d8f09f5931b2b466c6a83d
+Author: Keith Busch <kbusch@kernel.org>
+Date:   Fri, 12 Jun 2026 15:32:04 -0700
+
+    Offsets and lengths need to be validated against the dma alignment. This
+    check was skipped for sufficiently a small bio with a single bvec, which
+    may allow an invalid request dispatched to the driver. Force the
+    validation for an unaligned bvec by forcing the bio split path that
+    handles this condition.
+
+    Fixes: 7eac33186957 ("iomap: simplify direct io validity check")
+    Fixes: 5ff3f74e145a ("block: simplify direct io validity check")
+    Reported-by: Carlos Maiolino <cem@kernel.org>
+    Signed-off-by: Keith Busch <kbusch@kernel.org>
+    Link: https://patch.msgid.link/20260612223205.465913-1-kbusch@meta.com
+    Signed-off-by: Jens Axboe <axboe@kernel.dk>
+
+Conflicts: RHEL 9 bio_may_need_split() predates the bvec-iterator
+    form and looks at bi_io_vec[0] directly after the bi_vcnt != 1
+    test, so the dma_alignment test is added against that bvec.
+
+Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
+---
+ block/blk.h | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/block/blk.h b/block/blk.h
+index 783f4b57b..b7b1da1e5 100644
+--- a/block/blk.h
++++ b/block/blk.h
+@@ -366,6 +366,9 @@ static inline bool bio_may_need_split(struct bio *bio,
+ 		return true;
+ 	if (bio->bi_vcnt != 1)
+ 		return true;
++	if ((bio->bi_io_vec->bv_offset | bio->bi_io_vec->bv_len) &
++	    lim->dma_alignment)
++		return true;
+ 	return bio->bi_io_vec->bv_len + bio->bi_io_vec->bv_offset >
+ 		lim->min_segment_size;
+ }
+-- 
+2.55.0
+

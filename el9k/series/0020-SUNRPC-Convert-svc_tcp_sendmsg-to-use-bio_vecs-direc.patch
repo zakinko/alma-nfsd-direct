@@ -1,7 +1,7 @@
-From 1ac495229267c883e5e0b3ab3d05998e868822d6 Mon Sep 17 00:00:00 2001
+From fdea80a858a24aa33717ae5879645a8c92313881 Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 20:02:17 +0000
-Subject: [PATCH 12/28] SUNRPC: Convert svc_tcp_sendmsg to use bio_vecs
+Subject: [PATCH 20/37] SUNRPC: Convert svc_tcp_sendmsg to use bio_vecs
  directly
 
 JIRA: https://issues.redhat.com/browse/RHEL-XXXXX

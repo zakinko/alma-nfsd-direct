@@ -1,7 +1,7 @@
 From e4cee81f546d3266873a0d8bba38c8444b348d96 Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Thu, 12 Nov 2026 06:17:28 +0000
-Subject: [PATCH 02/28] block: add size alignment to bio_iov_iter_get_pages
+Subject: [PATCH 02/37] block: add size alignment to bio_iov_iter_get_pages
 
 JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
 

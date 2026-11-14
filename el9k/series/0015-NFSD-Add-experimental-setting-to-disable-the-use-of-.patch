@@ -1,7 +1,7 @@
-From 509782c2bbbb6daed85305790e0c33fd53d8bde8 Mon Sep 17 00:00:00 2001
+From 77d71db2b4094de1438fc32db5ae56c66bc849f2 Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 19:56:38 +0000
-Subject: [PATCH 07/28] NFSD: Add experimental setting to disable the use of
+Subject: [PATCH 15/37] NFSD: Add experimental setting to disable the use of
  splice read
 
 JIRA: https://issues.redhat.com/browse/RHEL-XXXXX

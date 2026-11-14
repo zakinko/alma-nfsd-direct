@@ -1,7 +1,7 @@
-From 4523856ed7f0998f7c4c0d8a612141e3e73aad1d Mon Sep 17 00:00:00 2001
+From adb449bede08f1fa645349d4ea07855b0bfd6f98 Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 20:04:16 +0000
-Subject: [PATCH 20/28] NFSD: Add array bounds-checking in nfsd_iter_read()
+Subject: [PATCH 28/37] NFSD: Add array bounds-checking in nfsd_iter_read()
 
 JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
 

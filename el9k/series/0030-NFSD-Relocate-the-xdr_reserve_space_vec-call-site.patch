@@ -1,7 +1,7 @@
-From 74e22fb4eaaccedd3fb4091ef060493234f33834 Mon Sep 17 00:00:00 2001
+From b6fa3f9ddf92f3452e9321a31eef2032ca72a7a6 Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 20:05:40 +0000
-Subject: [PATCH 22/28] NFSD: Relocate the xdr_reserve_space_vec() call site
+Subject: [PATCH 30/37] NFSD: Relocate the xdr_reserve_space_vec() call site
 
 JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
 

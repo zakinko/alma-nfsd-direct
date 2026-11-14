@@ -1,7 +1,7 @@
-From 51dfa14c39e6fe55c10e1a8d6828aaaeb4d69217 Mon Sep 17 00:00:00 2001
+From ed151e8a8fe1a4c89e116e91f8a2be4fcdc141f0 Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 20:07:09 +0000
-Subject: [PATCH 27/28] nfsd: fix partial-write detection in nfsd_direct_write
+Subject: [PATCH 35/37] nfsd: fix partial-write detection in nfsd_direct_write
 
 JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
 
@@ -40,7 +40,6 @@ Date:   Sat, 30 May 2026 09:19:23 -0400
 
     Fixes: 06c5c97293e3 ("NFSD: Implement NFSD_IO_DIRECT for NFS WRITE")
     Cc: stable@vger.kernel.org
-    Assisted-by: kres:claude-opus-4-7
     Reported-by: Chris Mason <clm@meta.com>
     Signed-off-by: Chris Mason <clm@meta.com>
     Link: https://patch.msgid.link/20260530-nfsd-fixes-v2-7-f27e8eb4d974@kernel.org

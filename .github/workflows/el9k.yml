@@ -25,7 +25,7 @@ jobs:
       - name: Build the kernel
         run: |
           cd $W
-          scp -q -r -i key -P 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $GITHUB_WORKSPACE/el9k $GITHUB_WORKSPACE/el9/run.sh $GITHUB_WORKSPACE/el9/bvec.bt root@127.0.0.1:/root/
+          scp -q -r -i key -P 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $GITHUB_WORKSPACE/el9k $GITHUB_WORKSPACE/el9/run.sh $GITHUB_WORKSPACE/el9/bvec.bt $GITHUB_WORKSPACE/el9/dioal.sh $GITHUB_WORKSPACE/el9/dioal.c root@127.0.0.1:/root/
           $S 'sh /root/el9k/build.sh'
       - name: Reboot into it
         run: |
@@ -38,3 +38,7 @@ jobs:
         run: |
           cd $W
           $S 'EL9K=1 sh /root/run.sh'
+      - name: Misaligned direct I/O on dm and md
+        run: |
+          cd $W
+          $S 'sh /root/dioal.sh'

@@ -1,7 +1,7 @@
-From 6bb4c40392d8affe74252245e831b2a3fc198da8 Mon Sep 17 00:00:00 2001
+From 1ed4ac2e6d94b3a598fc070c63e414e19b916348 Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 19:54:27 +0000
-Subject: [PATCH 06/28] NFSD: Add /sys/kernel/debug/nfsd
+Subject: [PATCH 14/37] NFSD: Add /sys/kernel/debug/nfsd
 
 JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
 

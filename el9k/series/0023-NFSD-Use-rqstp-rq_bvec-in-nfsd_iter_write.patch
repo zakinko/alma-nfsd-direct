@@ -1,7 +1,7 @@
-From 335eadc88a6b3cb8166d55200ef2a5e92b7f8f45 Mon Sep 17 00:00:00 2001
+From bb2e55d54df3ee962aaee11bdfea1512c66e9256 Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 20:02:38 +0000
-Subject: [PATCH 15/28] NFSD: Use rqstp->rq_bvec in nfsd_iter_write()
+Subject: [PATCH 23/37] NFSD: Use rqstp->rq_bvec in nfsd_iter_write()
 
 JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
 

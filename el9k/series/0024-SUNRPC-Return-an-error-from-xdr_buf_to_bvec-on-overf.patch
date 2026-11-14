@@ -1,7 +1,7 @@
-From ebd93cf1080393e28b5e10a61f9af48244b9bdcf Mon Sep 17 00:00:00 2001
+From a20bc6432ee7fff243e725ffd5101f288eaddce6 Mon Sep 17 00:00:00 2001
 From: Showta Ishizaki <zakinko@snowrabbit.org>
 Date: Wed, 11 Nov 2026 20:02:55 +0000
-Subject: [PATCH 16/28] SUNRPC: Return an error from xdr_buf_to_bvec() on
+Subject: [PATCH 24/37] SUNRPC: Return an error from xdr_buf_to_bvec() on
  overflow
 
 JIRA: https://issues.redhat.com/browse/RHEL-XXXXX

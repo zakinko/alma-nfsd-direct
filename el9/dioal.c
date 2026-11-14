@@ -40,7 +40,8 @@ int main(int argc, char **argv)
 		return 2;
 	path = argv[1];
 	lbs = strtoul(argv[2], NULL, 0);
-	len = 4 * lbs;
+	/* Room for the 3584 + 512 + rest split below at any lbs. */
+	len = lbs < 2048 ? 8192 : 4 * lbs;
 	fd = open(path, O_RDWR | O_DIRECT);
 	if (fd < 0) {
 		perror(path);

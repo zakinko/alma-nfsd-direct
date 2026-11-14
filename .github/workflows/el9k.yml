@@ -5,6 +5,11 @@ on:
     branches: [main]
     paths: ['el9k/**', '.github/workflows/el9k.yml']
   workflow_dispatch:
+    inputs:
+      measure:
+        description: run the NFS measurement
+        type: boolean
+        default: true
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -35,6 +40,7 @@ jobs:
           for i in $(seq 1 60); do $S 'uname -r | grep -q -- -nd' && break; sleep 10; done
           $S 'uname -r'
       - name: Measure
+        if: github.event_name != 'workflow_dispatch' || inputs.measure
         run: |
           cd $W
           $S 'EL9K=1 sh /root/run.sh'

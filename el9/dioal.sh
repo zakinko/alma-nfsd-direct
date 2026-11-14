@@ -1,7 +1,8 @@
 #!/bin/sh
 # Misaligned user O_DIRECT on stacking drivers: dm-linear, dm-mirror and md
 # raid1 over loop devices, the bare loop device, and a file on XFS over
-# dm-mirror for the iomap path.  Every case must be refused with EINVAL or
+# dm-mirror for the iomap path (written out first: a hole is zeroed by
+# iomap without a bio, so a misaligned read of one succeeds).  Every case must be refused with EINVAL or
 # succeed with intact data, inside a time bound; a hang shows up as the
 # timeout.  Afterwards no mirror leg may have been failed for a rejected bio.
 set -u
@@ -22,7 +23,8 @@ yes | mdadm -q --create /dev/md/dioal --level=1 --raid-devices=2 --metadata=1.2 
 	--assume-clean --run $L3 $L4
 mkdir -p mnt
 mkfs.xfs -q -f /dev/mapper/dioal-mir && mount /dev/mapper/dioal-mir mnt &&
-	truncate -s 16M mnt/f || FAIL "xfs on dm-mirror"
+	dd if=/dev/urandom of=mnt/f bs=1M count=16 conv=fsync status=none ||
+	FAIL "xfs on dm-mirror"
 echo "dma_alignment: loop $(cat /sys/block/${L0#/dev/}/queue/dma_alignment 2>/dev/null)," \
 	"dm $(cat /sys/block/$(basename $(readlink -f /dev/mapper/dioal-lin))/queue/dma_alignment 2>/dev/null)"
 for d in $L0 /dev/mapper/dioal-lin /dev/mapper/dioal-mir /dev/md/dioal mnt/f; do

@@ -14,6 +14,11 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        # 0: nfsd rebuilt as shipped; 1: with el10/series
+        patch: [0, 1]
     steps:
       - uses: actions/checkout@v4
       - name: Boot AlmaLinux 10 with its newest kernel
@@ -25,5 +30,7 @@ jobs:
       - name: Measure
         run: |
           cd $W
+          $S 'mkdir -p /root/el10'
+          scp -q -r -i key -P 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $GITHUB_WORKSPACE/el10/. root@127.0.0.1:/root/el10/
           scp -q -i key -P 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $GITHUB_WORKSPACE/el9/run.sh $GITHUB_WORKSPACE/el9/bvec.bt root@127.0.0.1:/root/
-          $S 'cat /etc/almalinux-release; rpm -q kernel-core; MAINLINE=1 sh /root/run.sh'
+          $S 'cat /etc/almalinux-release; rpm -q kernel-core; PATCH=${{ matrix.patch }} sh /root/el10/build.sh && MAINLINE=1 sh /root/run.sh; r=$?; echo loaded srcversion $(cat /sys/module/nfsd/srcversion); exit $r'

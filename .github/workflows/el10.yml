@@ -1,0 +1,29 @@
+name: nfsd direct I/O on the AlmaLinux 10.3 kernel
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['el10/**', '.github/workflows/el10.yml']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Boot AlmaLinux 10 with its newest kernel
+        run: sh mainline/boot.sh
+        env:
+          IMG: https://repo.almalinux.org/almalinux/10/cloud/x86_64/images/AlmaLinux-10-GenericCloud-latest.x86_64.qcow2
+          UD: el10/user-data
+          READY: test -f /var/tmp/ready && uname -r | grep -q el10_3
+      - name: Measure
+        run: |
+          cd $W
+          scp -q -i key -P 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $GITHUB_WORKSPACE/el9/run.sh $GITHUB_WORKSPACE/el9/bvec.bt root@127.0.0.1:/root/
+          $S 'cat /etc/almalinux-release; rpm -q kernel-core; MAINLINE=1 sh /root/run.sh'

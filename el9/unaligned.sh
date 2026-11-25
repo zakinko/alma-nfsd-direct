@@ -74,7 +74,13 @@ for mode in 0 2; do
 echo $mode > $D/io_cache_read
 for sec in sys krb5i; do for v in 3 4.2; do
 	tag="read=$mode sec=$sec v$v"
-	timeout 60 mount -t nfs -o vers=$v,sec=$sec,rsize=1048576,proto=tcp $N:/srv/nv /mnt/ua || { FAIL "$tag: mount"; continue; }
+	# As run.sh's nmount: NFSv4 mounts get ESTALE after the previous umount.
+	m=""
+	for i in 1 2 3 4 5; do
+		timeout 60 mount -t nfs -o vers=$v,sec=$sec,rsize=1048576,proto=tcp $N:/srv/nv /mnt/ua && { m=1; break; }
+		echo "RETRY $i mount $tag"; exportfs -f; sleep 3
+	done
+	[ -n "$m" ] || { FAIL "$tag: mount"; continue; }
 	echo > $T/trace; : > $W/dd.err; ok=0; bad=""
 	for off in 0 1 2 3 4 8 12 511 512 1000 1024 2048 4092 4095 4096 4097 8190 1048575; do
 		for bs in 1000 12345 65536 1048576; do
@@ -87,6 +93,7 @@ for sec in sys krb5i; do for v in 3 4.2; do
 	for i in 1 2 3 4 5 6 7 8; do ( [ "$(get 12 33554432 1048576)" = "$w" ] || echo $i >> $W/par ) & done; wait
 	p=$(wc -l < $W/par)
 	echo "MEASURE $tag: $ok good, bad:${bad:- none}; parallel bad $p of 8; $(grep -c nfsd_read_direct $T/trace) direct READ events; dd errors $(wc -l < $W/dd.err)"
+	[ -s $W/dd.err ] && sort $W/dd.err | uniq -c | sed "s/^/$tag dd: /" | head -5
 	[ -z "$bad" ] && [ $p = 0 ] && echo "PASS $tag" || FAIL "$tag: data differs"
 	umount -f /mnt/ua
 done; done; done

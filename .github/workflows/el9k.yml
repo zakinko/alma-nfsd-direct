@@ -53,15 +53,18 @@ jobs:
         run: |
           cd $W
           $S 'sh /root/dioal.sh'
-      - name: Unaligned READs
-        if: always()
-        timeout-minutes: 40
-        run: |
-          cd $W
-          $S 'sh /root/unaligned.sh' || { $S 'dmesg | tail -60'; exit 1; }
       - name: Repeated direct READs over RDMA and TCP
         if: always()
         timeout-minutes: 60
         run: |
           cd $W
           $S 'sh /root/rdmarep.sh' || { $S 'dmesg | tail -60'; exit 1; }
+      - name: Unaligned READs
+        if: always()
+        timeout-minutes: 40
+        run: |
+          cd $W
+          $S 'sh /root/unaligned.sh' || { $S 'dmesg | tail -60'; exit 1; }
+      - name: Serial console
+        if: failure()
+        run: tail -c 20000 $W/serial.log | grep -av '^\s*$' | tail -150

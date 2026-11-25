@@ -38,6 +38,15 @@ mountpoint -q /srv/nv || FAIL "/srv/nv is not mounted"
 # "the rpc_pipefs directory is empty!".  The stock kernel happened to have
 # auth_rpcgss already loaded; the localmodconfig kernel does not autoload it.
 modprobe rpcsec_gss_krb5 || FAIL "modprobe rpcsec_gss_krb5"
+# With sunrpc as a module, var-lib-nfs-rpc_pipefs.mount can run before the
+# filesystem type exists and leave the directory unmounted, which rpc.gssd
+# also reports as "empty".  Mount it if needed, and remount if gssd/ is
+# missing so auth_rpcgss populates it.
+P=/var/lib/nfs/rpc_pipefs
+echo "rpc_pipefs before: $(mountpoint $P 2>&1); $(ls $P | tr '\n' ' ')"
+mountpoint -q $P || mount -t rpc_pipefs sunrpc $P || FAIL "mount rpc_pipefs"
+[ -d $P/gssd ] || { umount $P; mount -t rpc_pipefs sunrpc $P; }
+echo "rpc_pipefs after: $(mountpoint $P 2>&1); $(ls $P | tr '\n' ' ')"
 systemctl restart gssproxy rpc-gssd; systemctl restart nfs-server; exportfs -ra
 # Diagnose the client GSS daemon: on the custom kernel it has failed to start
 # while the stock kernel's starts fine, and the journal is not otherwise kept.

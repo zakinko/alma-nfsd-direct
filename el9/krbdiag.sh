@@ -35,6 +35,33 @@ kadmin.local -q "ktadd nfs/$N"
 echo "== keytab =="; klist -k /etc/krb5.keytab
 echo "== start krb5kdc =="; systemctl start krb5kdc; systemctl --no-pager status krb5kdc | head -8
 
+# Reproduce the custom-kernel state: GSS modules present but not loaded, so
+# rpc_pipefs has no gssd/ dir and rpc.gssd exits "rpc_pipefs directory empty".
+echo "== force the -nd state: unload gss =="
+systemctl stop rpc-gssd 2>/dev/null
+rmmod rpcsec_gss_krb5 2>/dev/null; rmmod auth_rpcgss 2>/dev/null
+echo "lsmod gss:"; lsmod | grep -E 'rpcgss|gss_krb5' || echo "  (none loaded)"
+echo "rpc_pipefs mount:"; mount | grep rpc_pipefs || echo "  not mounted"
+echo "rpc_pipefs contents:"; ls -la /var/lib/nfs/rpc_pipefs 2>&1
+echo "== restart rpc-gssd with modules unloaded (expect empty) =="
+systemctl restart rpc-gssd; echo "rc=$?"
+systemctl --no-pager status rpc-gssd 2>&1 | grep -iE 'Active:|empty|error' | head -4
+
+echo "== FIX attempt 1: modprobe then look =="
+modprobe rpcsec_gss_krb5; echo "modprobe rc=$?"
+echo "lsmod gss:"; lsmod | grep -E 'rpcgss|gss_krb5'
+echo "rpc_pipefs contents after modprobe:"; ls -la /var/lib/nfs/rpc_pipefs 2>&1
+systemctl restart rpc-gssd; echo "restart rc=$?"
+systemctl is-active rpc-gssd && echo "FIX1 WORKED" || echo "FIX1 failed"
+
+if ! systemctl is-active --quiet rpc-gssd; then
+	echo "== FIX attempt 2: remount rpc_pipefs then restart =="
+	systemctl restart var-lib-nfs-rpc_pipefs.mount 2>&1 | head -3
+	echo "rpc_pipefs contents after remount:"; ls -la /var/lib/nfs/rpc_pipefs 2>&1
+	systemctl restart rpc-gssd; echo "restart rc=$?"
+	systemctl is-active rpc-gssd && echo "FIX2 WORKED" || echo "FIX2 failed"
+fi
+
 echo "== rpc_pipefs =="; mount | grep rpc_pipefs || echo "not mounted"
 echo "== systemctl restart gssproxy =="
 systemctl restart gssproxy; echo "gssproxy rc=$?"

@@ -1,0 +1,128 @@
+From 8fff3158a4466b3dc090b8e9ab0c03c87a3f2570 Mon Sep 17 00:00:00 2001
+From: Showta Ishizaki <zakinko@snowrabbit.org>
+Date: Wed, 25 Nov 2026 09:22:06 +0900
+Subject: [PATCH 39/46] nfsd: account for page_base when advancing rq_next_page
+
+JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
+
+Upstream Status: git.kernel.org/pub/scm/linux/kernel/git/cel/linux.git (nfsd-testing)
+
+Conflicts: context only.
+
+commit 8611d8a8b92b92e8141fc29c683af9f2fc2ad7df
+Author: Chuck Lever <cel@kernel.org>
+Date:   Sun, 04 Oct 2026 15:40:24 -0400
+
+    nfsd: account for page_base when advancing rq_next_page
+
+    nfsd4_encode_operation() sets rq_next_page from xdr->page_ptr, which
+    the xdr_stream advances from page_len alone. A direct read leaves the
+    payload at a nonzero page_base, so its last page can lie beyond the
+    page xdr->page_ptr names. svc_rqst_release_pages() then skips that
+    page, and svc_alloc_arg() leaves it in the page array for the next
+    request while the transport still references it. svc_tcp_sendmsg()
+    splices the page into the socket without copying it, and svcrdma
+    keeps only the pages below rq_next_page until Send completion. The
+    next request reuses the page as a reply page, or on trees before
+    commit ee66b9e3e1c6 ("SUNRPC: Allocate a separate Reply page array")
+    as a receive buffer, and the tail of the READ payload reaches the
+    client overwritten with that request's bytes.
+
+    Derive rq_next_page from page_base and page_len, the accounting that
+    xdr_truncate_encode() and the transports use to locate the payload.
+
+    Currently nfsd_direct_read() stores its alignment pad in page_base
+    even when the read returns no payload, and the pad can exceed the
+    size of the rq_respages array. Set page_base only when the read
+    returns payload, so that the new calculation stays within the pages
+    offered to the read.
+
+    Commit 2eb2b9358181 ("SUNRPC: Convert svc_tcp_sendmsg to use
+    bio_vecs directly") introduced the dropped shift, but no caller
+    produced a page_base of a page or more until direct READ.
+
+    Fixes: d686e64e931c ("NFSD: Implement NFSD_IO_DIRECT for NFS READ")
+    Cc: stable@vger.kernel.org
+    Link: https://patch.msgid.link/20261004194029.10714-3-cel@kernel.org
+    Signed-off-by: Chuck Lever <cel@kernel.org>
+
+Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
+---
+ fs/nfsd/nfs4xdr.c | 12 +++++++++---
+ fs/nfsd/vfs.c     |  7 ++++---
+ net/sunrpc/xdr.c  |  2 +-
+ 3 files changed, 14 insertions(+), 7 deletions(-)
+
+diff --git a/fs/nfsd/nfs4xdr.c b/fs/nfsd/nfs4xdr.c
+index 7800b8a..4418b18 100644
+--- a/fs/nfsd/nfs4xdr.c
++++ b/fs/nfsd/nfs4xdr.c
+@@ -5801,6 +5801,7 @@ nfsd4_encode_operation(struct nfsd4_compoundres *resp, struct nfsd4_op *op)
+ 	struct svc_rqst *rqstp = resp->rqstp;
+ 	const struct nfsd4_operation *opdesc = op->opdesc;
+ 	unsigned int op_status_offset;
++	struct page **next_page;
+ 	nfsd4_enc encoder;
+ 
+ 	if (xdr_stream_encode_u32(xdr, op->opnum) != XDR_UNIT)
+@@ -5881,10 +5882,15 @@ release:
+ 		opdesc->op_release(&op->u);
+ 
+ 	/*
+-	 * Account for pages consumed while encoding this operation.
+-	 * The xdr_stream primitives don't manage rq_next_page.
++	 * Account for pages consumed while encoding this operation. The
++	 * xdr_stream primitives don't manage rq_next_page, and
++	 * xdr->page_ptr does not account for page_base. XDR padding can
++	 * carry page_base + page_len past rq_page_end.
+ 	 */
+-	rqstp->rq_next_page = xdr->page_ptr + 1;
++	next_page = xdr->buf->pages +
++		DIV_ROUND_UP(xdr->buf->page_base + xdr->buf->page_len,
++			     PAGE_SIZE);
++	rqstp->rq_next_page = min(next_page, rqstp->rq_page_end);
+ }
+ 
+ /**
+diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
+index efb6e85..c635512 100644
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -1133,9 +1133,6 @@ nfsd_direct_read(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 	if (host_err >= 0) {
+ 		unsigned int pad = offset - dio_start;
+ 
+-		/* The returned payload starts after the pad */
+-		rqstp->rq_res.page_base = pad;
+-
+ 		/* Compute the count of bytes to be returned */
+ 		if (host_err > pad + *count)
+ 			host_err = *count;
+@@ -1143,6 +1140,10 @@ nfsd_direct_read(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 			host_err -= pad;
+ 		else
+ 			host_err = 0;
++
++		/* The returned payload starts after the pad */
++		if (host_err)
++			rqstp->rq_res.page_base = pad;
+ 	} else if (unlikely(host_err == -EINVAL)) {
+ 		struct inode *inode = d_inode(fhp->fh_dentry);
+ 
+diff --git a/net/sunrpc/xdr.c b/net/sunrpc/xdr.c
+index 1eae381..d3ee866 100644
+--- a/net/sunrpc/xdr.c
++++ b/net/sunrpc/xdr.c
+@@ -189,8 +189,8 @@ int xdr_buf_to_bvec(struct bio_vec *bvec, unsigned int bvec_size,
+ 	}
+ 
+ 	if (xdr->page_len) {
++		struct page **pages = xdr->pages + (xdr->page_base >> PAGE_SHIFT);
+ 		unsigned int offset, len, remaining;
+-		struct page **pages = xdr->pages;
+ 
+ 		offset = offset_in_page(xdr->page_base);
+ 		remaining = xdr->page_len;
+-- 
+2.54.0 (Apple Git-157)
+

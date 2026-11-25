@@ -1,0 +1,88 @@
+From 66433798c586408baa005531989d7b82c6ea6521 Mon Sep 17 00:00:00 2001
+From: Showta Ishizaki <zakinko@snowrabbit.org>
+Date: Wed, 25 Nov 2026 09:22:06 +0900
+Subject: [PATCH 45/46] NFSD: Refuse a direct READ whose aligned range exceeds the reply pages
+
+JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
+
+Upstream Status: git.kernel.org/pub/scm/linux/kernel/git/cel/linux.git (nfsd-testing)
+
+Conflicts: nfsd_direct_read_ok() is added here, without the trace events and
+    the per-export mode.
+
+commit dc8c16457ac3b9c23734f0098fe3073f11e34472
+Author: Chuck Lever <cel@kernel.org>
+Date:   Wed, 11 Nov 2026 10:20:50 -0500
+
+    NFSD: Refuse a direct READ whose aligned range exceeds the reply pages
+
+    nfsd_direct_read() expands the READ's byte range to the file's direct
+    I/O alignment, then maps reply pages until the range is covered or
+    rq_page_end is reached. A block device whose logical block size
+    exceeds PAGE_SIZE reports an alignment larger than PAGE_SIZE. With
+    16KB blocks and 4KB pages, a maximum-size READ at an offset that is
+    not a multiple of 16KB needs one more page than the svc_rqst has.
+    The loop stops at rq_page_end and passes a truncated iterator to the
+    filesystem. iomap rejects the unaligned length with -EINVAL, and NFSD
+    returns NFSERR_SERVERFAULT for a READ that a buffered read would have
+    satisfied.
+
+    Check the aligned range against the reply pages in
+    nfsd_direct_read_ok(), and fall back to a buffered read when the
+    range does not fit.
+
+    Reported-by: sashiko-bot <sashiko-bot@kernel.org>
+    Closes: https://sashiko.dev/#/patchset/20261109-xdr-page-base-v1-0-a4f4411d760d@kernel.org?part=11
+    Fixes: d686e64e931c ("NFSD: Implement NFSD_IO_DIRECT for NFS READ")
+    Cc: stable@vger.kernel.org
+    Reviewed-by: Mike Snitzer <snitzer@kernel.org>
+    Link: https://patch.msgid.link/20261111152050.172047-1-cel@kernel.org
+    Signed-off-by: Chuck Lever <cel@kernel.org>
+
+Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
+---
+ fs/nfsd/vfs.c | 21 ++++++++++++++++++---
+ 1 file changed, 18 insertions(+), 3 deletions(-)
+
+diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
+index 54ff41b..99eccb3 100644
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -1155,6 +1155,22 @@ nfsd_direct_read(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 				eof, host_err);
+ }
+ 
++static bool nfsd_direct_read_ok(struct svc_rqst *rqstp, struct nfsd_file *nf,
++				loff_t offset, unsigned long count,
++				struct page **page, bool dio_ok)
++{
++	u32 offset_align = nf->nf_dio_read_offset_align;
++	u64 dio_len;
++
++	/* When dio_read_offset_align is zero, dio is not supported */
++	if (!dio_ok || !offset_align || rqstp->rq_res.page_len)
++		return false;
++	/* An alignment above PAGE_SIZE can round the range past rq_page_end */
++	dio_len = round_up((u64)offset + count, offset_align) -
++		  round_down(offset, offset_align);
++	return (s64)dio_len <= (s64)PAGE_SIZE * (rqstp->rq_page_end - page);
++}
++
+ /**
+  * nfsd_iter_read - Perform a VFS read using an iterator
+  * @rqstp: RPC transaction context
+@@ -1200,9 +1216,8 @@ __be32 nfsd_iter_read(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 	case NFSD_IO_BUFFERED:
+ 		break;
+ 	case NFSD_IO_DIRECT:
+-		/* When dio_read_offset_align is zero, dio is not supported */
+-		if (dio_ok && nf->nf_dio_read_offset_align &&
+-		    !rqstp->rq_res.page_len)
++		if (nfsd_direct_read_ok(rqstp, nf, offset, *count, page,
++					dio_ok))
+ 			return nfsd_direct_read(rqstp, fhp, nf, offset,
+ 						count, page, eof);
+ 		fallthrough;
+-- 
+2.54.0 (Apple Git-157)
+

@@ -1,0 +1,123 @@
+From 674bffa71959144a1808f3b577553f5ce513874b Mon Sep 17 00:00:00 2001
+From: Showta Ishizaki <zakinko@snowrabbit.org>
+Date: Wed, 25 Nov 2026 09:22:06 +0900
+Subject: [PATCH 46/46] NFSD: cut a misaligned direct-mode WRITE at folio boundaries
+
+JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
+
+Upstream Status: git.kernel.org/pub/scm/linux/kernel/git/cel/linux.git (nfsd-testing)
+
+Conflicts: RHEL 9 has no mapping_min_folio_nrbytes(); the smallest folio is one
+    page.
+
+commit bf8ad632a5cd55514302531007c5d7fb91a1a88c
+Author: Mike Snitzer <snitzer@kernel.org>
+Date:   Sat, 24 Oct 2026 15:12:22 -0400
+
+    NFSD: cut a misaligned direct-mode WRITE at folio boundaries
+
+    nfsd_write_dio_iters_init() splits a misaligned direct-mode WRITE into a
+    direct middle and buffered ends.  Then as little of the WRITE as
+    possible goes through the page cache.  That works only if direct and
+    buffered I/O never meet inside a folio.  The direct middle invalidates
+    the page cache over its range.  So a middle that starts or stops inside
+    the folio of a buffered end drops that folio.  Then the second of the
+    two neighbouring WRITEs reads it back from the device.
+
+    The middle was cut at the file system's direct I/O offset alignment:
+
+            prefix_end = round_up(offset, offset_align);
+            middle_end = round_down(orig_end, offset_align);
+
+    Where that alignment is a multiple of the smallest folio the mapping
+    allows, the cut is a folio boundary, and the problem cannot occur.  This
+    is the case for 4 KiB pages over 4096-byte blocks.  It is broken where
+    the smallest folio is larger than the alignment.  Examples are 16 and
+    64 KiB pages over 4096-byte blocks, and 4 KiB pages over 512-byte
+    blocks.
+
+    Another is a block larger than the page, which the page cache holds as
+    one folio.  There a misaligned WRITE costs a read per shared folio on
+    top of its three I/Os.
+
+    Cut each end of a WRITE on its own:
+
+    - an end that is already an offset_align multiple needs no buffered
+      segment, and the middle starts or stops there, inside a folio or not.
+      A WRITE aligned to the device stays fully direct at every page size.
+    - a misaligned end needs a buffered segment in any case.  That segment
+      now runs to the nearest boundary of the smallest folio inside the
+      WRITE.
+
+    That is one rule: a misaligned end is cut at a multiple of the larger of
+    offset_align and mapping_min_folio_nrbytes().  Both are powers of two.
+
+    The segments still tile exactly the bytes of the WRITE: a buffered end
+    grows inward, at the middle's expense, never outward.  A misaligned
+    WRITE that holds no whole folio of the smallest size has no middle, and
+    is issued as one buffered segment.  Where offset_align is a multiple of
+    the smallest folio, nothing changes.
+
+    A folio larger than the smallest that the mapping allows can still span
+    the cut.  Readahead or an earlier buffered write can leave one, and only
+    the lookup that finds it learns its size.  The direct middle then
+    invalidates it as a whole, and the neighbouring WRITE reads its part
+    back once.  Direct I/O always has that read-back for a cached folio, and
+    the cut cannot prevent it.
+
+    nfsd-io-modes.rst said that DONTCACHE is not used for the misaligned
+    segments.  The write loop already contradicted that: every segment
+    without IOCB_DIRECT gets IOCB_DONTCACHE when the file system supports
+    it.  Replace that sentence with one that says so, next to one that
+    describes the new cut.
+
+    Fixes: 06c5c97293e3 ("NFSD: Implement NFSD_IO_DIRECT for NFS WRITE")
+    Cc: stable@vger.kernel.org
+    Signed-off-by: Mike Snitzer <snitzer@kernel.org>
+    Link: https://patch.msgid.link/at0DFod8CcUfus2S@kernel.org
+    Signed-off-by: Chuck Lever <cel@kernel.org>
+
+Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
+---
+ fs/nfsd/vfs.c | 17 +++++++++++++++--
+ 1 file changed, 15 insertions(+), 2 deletions(-)
+
+diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
+index 99eccb3..227cf38 100644
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -1325,6 +1325,7 @@ nfsd_write_dio_iters_init(struct nfsd_file *nf, struct bio_vec *bvec,
+ 	size_t prefix, middle, suffix;
+ 	loff_t offset = iocb->ki_pos;
+ 	unsigned int nsegs = 0;
++	unsigned long cut;
+ 
+ 	/*
+ 	 * Check if direct I/O is feasible for this write request.
+@@ -1335,9 +1336,21 @@ nfsd_write_dio_iters_init(struct nfsd_file *nf, struct bio_vec *bvec,
+ 	    unlikely(total < max(offset_align, mem_align)))
+ 		goto no_dio;
+ 
+-	prefix_end = round_up(offset, offset_align);
+ 	orig_end = offset + total;
+-	middle_end = round_down(orig_end, offset_align);
++
++	/*
++	 * The direct middle invalidates the page cache over its range. A
++	 * middle that starts or stops inside the folio of a buffered end
++	 * drops that folio, and the neighboring WRITE reads the folio back.
++	 */
++	cut = max_t(unsigned long, offset_align, PAGE_SIZE);
++	/* round_up(offset, cut) can wrap at OFFSET_MAX, so take a distance. */
++	prefix_end = offset;
++	if (!IS_ALIGNED(offset, offset_align))
++		prefix_end += min_t(loff_t, cut - (offset & (cut - 1)), total);
++	middle_end = orig_end;
++	if (!IS_ALIGNED(orig_end, offset_align))
++		middle_end = max(round_down(orig_end, cut), prefix_end);
+ 
+ 	prefix = prefix_end - offset;
+ 	middle = middle_end - prefix_end;
+-- 
+2.54.0 (Apple Git-157)
+

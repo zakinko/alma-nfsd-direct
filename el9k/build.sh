@@ -19,7 +19,9 @@ T=$(ls linux-*.tar.xz); D=${T%.tar.xz}
 tar xJf $T
 cd $D
 # git apply works on a plain directory, outside any repository.
+n=0
 for p in $S/series/*.patch; do
+	n=$((n + 1)); [ $n -gt ${LIMIT:-999} ] && break
 	if git apply "$p" </dev/null 2>/dev/null; then echo "applied: $(basename $p)"
 	elif git apply -C1 "$p" </dev/null 2>/dev/null; then echo "applied with one line of context: $(basename $p)"
 	else echo "REJECT: $(basename $p)"; git apply --reject "$p" </dev/null 2>&1 | tail -5; exit 1
@@ -28,7 +30,8 @@ done
 cp /boot/config-$K .config
 # The modules the test uses, loaded so that localmodconfig keeps them.
 for m in nfsd nfs nfsv3 nfsv4 rpcrdma rdma_rxe nvmet nvme_loop nvme_fabrics \
-	 xfs raid0 raid1 md_mod dm_mod dm_mirror loop configfs ib_core rdma_ucm; do modprobe $m 2>/dev/null || true; done
+	 xfs raid0 raid1 md_mod dm_mod dm_mirror loop configfs ib_core rdma_ucm \
+	 auth_rpcgss rpcsec_gss_krb5 cts cbc aes sha1 sha256 sha512 cmac hmac camellia; do modprobe $m 2>/dev/null || true; done
 lsmod > $W/lsmod
 yes '' | make -s LSMOD=$W/lsmod localmodconfig >/dev/null
 scripts/config -d MODULE_SIG -d MODULE_SIG_ALL -d DEBUG_INFO_BTF \

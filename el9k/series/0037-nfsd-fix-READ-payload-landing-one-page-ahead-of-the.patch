@@ -1,0 +1,65 @@
+From 0b7286eb63ff4cb5a13513fdf96ee24bc337707f Mon Sep 17 00:00:00 2001
+From: Showta Ishizaki <zakinko@snowrabbit.org>
+Date: Wed, 25 Nov 2026 09:22:05 +0900
+Subject: [PATCH 37/46] nfsd: fix READ payload landing one page ahead of the XDR accounting
+
+JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
+
+Upstream Status: git.kernel.org/pub/scm/linux/kernel/git/cel/linux.git (nfsd-testing)
+
+commit ad5b0e8f4f57f9bf9b4c9b865d9604c3b49641fb
+Author: Dairui Zhang <zhangdairui@gmail.com>
+Date:   Tue, 29 Sep 2026 03:14:22 +0800
+
+    nfsd: fix READ payload landing one page ahead of the XDR accounting
+
+    nfsd4_encode_readv() computes the in-page offset
+    base = page_len & ~PAGE_MASK and passes it to nfsd_iter_read(),
+    which writes the file data at that offset into *rq_next_page.
+    After each operation rq_next_page is set to page_ptr + 1, so when
+    the reply stream is mid-page the data lands one page ahead of where
+    the payload accounting continues (in the current page at base).
+    The client is then sent the stale tail of the current page -
+    previous RPC payloads, since reply pages are reused without
+    zeroing - instead of the file data: an info leak and corrupted
+    READ results.
+
+    Trigger: any compound where a READ follows an op that left the
+    stream mid-page, e.g. [PUTFH, READ(100), READ(N)] or READDIR+READ.
+
+    Place the data in the page the accounting is filling,
+    buf->pages[page_len >> PAGE_SHIFT], instead of one page ahead. At
+    an exact page boundary page_ptr is the empty page after the last
+    full one and page_ptr + 1 is one page too far, so this covers that
+    case too.
+
+    Fixes: 0d32a6bbb8e7bf ("NFSD: Fix zero NFSv4 READ results when RQ_SPLICE_OK is not set")
+    Cc: stable@vger.kernel.org
+    Suggested-by: Chuck Lever <cel@kernel.org>
+    Reported-by: Dairui Zhang <zhangdairui@gmail.com>
+    Signed-off-by: Dairui Zhang <zhangdairui@gmail.com>
+    Link: https://patch.msgid.link/20260929162752.1895270-1-zhangdairui@gmail.com
+    Signed-off-by: Chuck Lever <cel@kernel.org>
+
+Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
+---
+ fs/nfsd/nfs4xdr.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/fs/nfsd/nfs4xdr.c b/fs/nfsd/nfs4xdr.c
+index a4965dc..7800b8a 100644
+--- a/fs/nfsd/nfs4xdr.c
++++ b/fs/nfsd/nfs4xdr.c
+@@ -4414,6 +4414,9 @@ static __be32 nfsd4_encode_readv(struct nfsd4_compoundres *resp,
+ 	__be32 zero = xdr_zero;
+ 	__be32 nfserr;
+ 
++	resp->rqstp->rq_next_page = xdr->buf->pages +
++				    (xdr->buf->page_len >> PAGE_SHIFT);
++
+ 	nfserr = nfsd_iter_read(resp->rqstp, read->rd_fhp, read->rd_nf,
+ 				read->rd_offset, &maxcount, base,
+ 				&read->rd_eof);
+-- 
+2.54.0 (Apple Git-157)
+

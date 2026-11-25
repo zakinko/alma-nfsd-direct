@@ -1,0 +1,189 @@
+From 77cefb08f6eceb4af9d8eab2ba27390cca18e062 Mon Sep 17 00:00:00 2001
+From: Showta Ishizaki <zakinko@snowrabbit.org>
+Date: Wed, 25 Nov 2026 09:22:06 +0900
+Subject: [PATCH 42/46] NFSD: Place a word-unaligned direct READ's XDR pad in the tail
+
+JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
+
+Upstream Status: git.kernel.org/pub/scm/linux/kernel/git/cel/linux.git (nfsd-testing)
+
+Conflicts: no nfsd_read_io_mode() and no nfsd_read_dio trace events. The
+    splice path also takes the space_left computation from d0dfbddf7421
+    ("nfsd: fix XDR tail bounds after spliced READ"), which is part of the
+    helper, and nfserr_io from f14f54fb7d4f.
+
+commit e7ca728c427465c9dc60d00f8d8a9eb6bead6a8e
+Author: Chuck Lever <cel@kernel.org>
+Date:   Mon, 09 Nov 2026 14:53:22 -0500
+
+    NFSD: Place a word-unaligned direct READ's XDR pad in the tail
+
+    A direct READ rounds its start down to the DIO alignment and records
+    the difference, the pad, in rq_res.page_base. When the pad is not a
+    multiple of four, the encoder cannot continue word-aligned in the
+    pages after the payload. nfsd4_encode_readv() reserves the payload
+    through the stream anyway and writes the XDR pad at page_base +
+    count.
+
+    When pad + count fills the last page, the XDR pad lands in the next
+    page entry. If the read used the whole page array, that entry is the
+    NULL sentinel, and write_bytes_to_xdr_buf() stores through
+    page_address(NULL). Any client reading a read_io=direct export can
+    trigger the oops or memory corruption. Under krb5i, the MIC lands on
+    the payload and the READ fails an integrity check.
+
+    Put the XDR pad in the tail and move the stream there. The pad needs
+    a word of room in the head, so fall back to a buffered read when the
+    stream has left the head or the head has no room.
+
+    Fixes: d686e64e931c ("NFSD: Implement NFSD_IO_DIRECT for NFS READ")
+    Cc: stable@vger.kernel.org
+    Link: https://patch.msgid.link/20261109-xdr-page-base-v1-6-a4f4411d760d@kernel.org
+    Signed-off-by: Chuck Lever <cel@kernel.org>
+
+Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
+---
+ fs/nfsd/nfs4xdr.c | 89 +++++++++++++++++++++++++++++++++++------------
+ 1 file changed, 66 insertions(+), 23 deletions(-)
+
+diff --git a/fs/nfsd/nfs4xdr.c b/fs/nfsd/nfs4xdr.c
+index 6a60b1d..807d229 100644
+--- a/fs/nfsd/nfs4xdr.c
++++ b/fs/nfsd/nfs4xdr.c
+@@ -4333,6 +4333,49 @@ nfsd4_encode_open_downgrade(struct nfsd4_compoundres *resp, __be32 nfserr,
+ 	return nfsd4_encode_stateid4(xdr, &od->od_stateid);
+ }
+ 
++/* The stream is in the head with a word of room for an XDR pad */
++static bool nfsd4_pad_fits_in_head(const struct xdr_stream *xdr)
++{
++	return xdr->iov == xdr->buf->head && xdr->end - xdr->p >= 1;
++}
++
++/*
++ * Encode a page-resident READ payload and continue the stream in the tail. The
++ * caller checks nfsd4_pad_fits_in_head() first.
++ */
++static __be32 nfsd4_encode_page_payload(struct nfsd4_compoundres *resp,
++					unsigned long maxcount)
++{
++	struct xdr_stream *xdr = resp->xdr;
++	struct xdr_buf *buf = xdr->buf;
++	int space_left;
++
++	/*
++	 * Fail before the pages go in. Once they are in, xdr_truncate_encode()
++	 * in the caller warns when it drops an XDR pad from the tail.
++	 */
++	if (svc_encode_result_payload(resp->rqstp, buf->head[0].iov_len,
++				      maxcount))
++		return nfserr_io;
++	svcxdr_encode_opaque_pages(resp->rqstp, xdr, buf->pages,
++				   buf->page_base, maxcount);
++
++	/*
++	 * Bound the stream at the space left in the head page so a later
++	 * xdr_reserve_space() cannot write past it.
++	 *
++	 * xdr_truncate_encode() is not safe to use once the payload pages
++	 * are in place, so the following stream manipulations are
++	 * open-coded.
++	 */
++	space_left = min_t(int, (void *)xdr->end - (void *)xdr->p,
++			   buf->buflen - buf->len);
++	buf->buflen = buf->len + space_left;
++	xdr->end = (__be32 *)((void *)xdr->p + space_left);
++
++	return nfs_ok;
++}
++
+ /*
+  * The operation of this function assumes that this is the only
+  * READ operation in the COMPOUND. If there are multiple READs,
+@@ -4345,7 +4388,6 @@ static __be32 nfsd4_encode_splice_read(
+ {
+ 	struct xdr_stream *xdr = resp->xdr;
+ 	struct xdr_buf *buf = xdr->buf;
+-	int status, space_left;
+ 	__be32 nfserr;
+ 
+ 	/*
+@@ -4362,7 +4404,7 @@ static __be32 nfsd4_encode_splice_read(
+ 	 * svcxdr_encode_opaque_pages() to create a tail buffer
+ 	 * to XDR-pad the payload.
+ 	 */
+-	if (xdr->iov != xdr->buf->head || xdr->end - xdr->p < 1)
++	if (!nfsd4_pad_fits_in_head(xdr))
+ 		return nfserr_resource;
+ 
+ 	nfserr = nfsd_splice_read(read->rd_rqstp, read->rd_fhp,
+@@ -4371,27 +4413,9 @@ static __be32 nfsd4_encode_splice_read(
+ 	read->rd_length = maxcount;
+ 	if (nfserr)
+ 		goto out_err;
+-	svcxdr_encode_opaque_pages(read->rd_rqstp, xdr, buf->pages,
+-				   buf->page_base, maxcount);
+-	status = svc_encode_result_payload(read->rd_rqstp,
+-					   buf->head[0].iov_len, maxcount);
+-	if (status) {
+-		nfserr = nfserrno(status);
++	nfserr = nfsd4_encode_page_payload(resp, maxcount);
++	if (nfserr)
+ 		goto out_err;
+-	}
+-
+-	/*
+-	 * Prepare to encode subsequent operations.
+-	 *
+-	 * xdr_truncate_encode() is not safe to use after a successful
+-	 * splice read has been done, so the following stream
+-	 * manipulations are open-coded.
+-	 */
+-	space_left = min_t(int, (void *)xdr->end - (void *)xdr->p,
+-				buf->buflen - buf->len);
+-	buf->buflen = buf->len + space_left;
+-	xdr->end = (__be32 *)((void *)xdr->end + space_left);
+-
+ 	return nfs_ok;
+ 
+ out_err:
+@@ -4410,16 +4434,35 @@ static __be32 nfsd4_encode_readv(struct nfsd4_compoundres *resp,
+ {
+ 	struct xdr_stream *xdr = resp->xdr;
+ 	unsigned int starting_len = xdr->buf->len;
++	bool dio_ok = read->rd_dio_ok;
+ 	__be32 zero = xdr_zero;
+ 	__be32 nfserr;
+ 
++	/*
++	 * A direct read at an offset that is not a multiple of XDR_UNIT puts
++	 * its XDR pad in the tail. Moving the stream there takes a word of
++	 * room in the head.
++	 */
++	if (dio_ok && (read->rd_offset & (XDR_UNIT - 1)) &&
++	    nfsd_io_cache_read == NFSD_IO_DIRECT &&
++	    !xdr->buf->page_len && !nfsd4_pad_fits_in_head(xdr))
++		dio_ok = false;
++
+ 	nfserr = nfsd_iter_read(resp->rqstp, read->rd_fhp, read->rd_nf,
+ 				read->rd_offset, &maxcount, &read->rd_eof,
+-				read->rd_dio_ok);
++				dio_ok);
+ 	read->rd_length = maxcount;
+ 	if (nfserr)
+ 		return nfserr;
+ 
++	/*
++	 * When page_base is not a multiple of XDR_UNIT, no word-aligned stream
++	 * position in the pages is an aligned address, so the stream continues
++	 * in the tail instead.
++	 */
++	if (xdr->buf->page_base & (XDR_UNIT - 1))
++		return nfsd4_encode_page_payload(resp, maxcount);
++
+ 	/*
+ 	 * svcxdr_encode_opaque_pages() is not used here because
+ 	 * we don't want to encode subsequent results in this
+-- 
+2.54.0 (Apple Git-157)
+

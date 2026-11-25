@@ -1,0 +1,77 @@
+From aaa790a112da9664f5e83d5f12c667f073e47be1 Mon Sep 17 00:00:00 2001
+From: Showta Ishizaki <zakinko@snowrabbit.org>
+Date: Wed, 25 Nov 2026 09:22:06 +0900
+Subject: [PATCH 38/46] SUNRPC: in svcauth_gss_wrap_integ() resync rq_next_page after the GSS wrap
+
+JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
+
+Upstream Status: git.kernel.org/pub/scm/linux/kernel/git/cel/linux.git (nfsd-testing)
+
+commit 6cf7c5cb01e272b2e3ad8e58b13d361682311a52
+Author: Abhinandan Ekande <aekande@redhat.com>
+Date:   Tue, 22 Sep 2026 09:48:58 -0400
+
+    SUNRPC: in svcauth_gss_wrap_integ() resync rq_next_page after the GSS wrap
+
+    For a page-aligned READ payload, xdr_reserve_space_vec() leaves the
+    encode cursor with p == end and page_ptr still on the last payload page.
+    nfsd4_encode_operation() then resyncs rqstp->rq_next_page = xdr->page_ptr + 1,
+    so rq_next_page points at the first page past the payload.
+
+    The GSS MIC is encoded later, after the last operation, and nothing resyncs
+    rq_next_page after that. Because p == end, the MIC's xdr_reserve_space()
+    falls into xdr_get_next_encode_buffer(), which increments page_ptr into
+    the next page \u2014 the page rq_next_page points at. After the send,
+    svc_rqst_release_pages() releases only 'rq_next_page - rq_respages' pages,
+    so that page sits one past the release range and is never released. The
+    next reply from the same nfsd thread writes its MIC into the same physical
+    page while TCP still holds a MSG_SPLICE_PAGES reference to the previous
+    reply, so that reply is transmitted carrying the wrong MIC.
+
+    mmap + fscache workloads hit this consistently because their READ payloads
+    end exactly on a page boundary.
+
+    Before the commit 'd7de37d6d7cc', xdr_truncate_encode() ran after the
+    reserve. For the page-aligned case xdr_truncate_encode() correctly
+    recomputed page_ptr to point at the page after the payload. Therefore the
+    later MIC encode had room and never crossed page boundary. That protection
+    was a side effect rather than by design. The underlying hazard of MIC page
+    falling outside the release range existed before the commit as well; for
+    example payload that ends with fewer than a MIC's width of room left before
+    the page boundary. The commit did not introduce the bug, it widened the
+    trigger from that rare case to the page-aligned one.
+
+    The fix for this issue is to make the MIC page always fall inside the
+    release range regardless of payload alignment - that is resync rq_next_page
+    after the GSS wrap, for example, rqstp->rq_next_page = xdr->page_ptr + 1;
+    at the end of svcauth_gss_wrap_integ().
+
+    Fixes: d7de37d6d7cc ("NFSD: Relocate the xdr_reserve_space_vec() call site")
+    Cc: stable@vger.kernel.org
+    Suggested-by: Chuck Lever <cel@kernel.org>
+    Signed-off-by: Abhinandan Ekande <aekande@redhat.com>
+    Link: https://patch.msgid.link/20260922134858.2219136-1-aekande@redhat.com
+    Signed-off-by: Chuck Lever <cel@kernel.org>
+
+Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
+---
+ net/sunrpc/auth_gss/svcauth_gss.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/net/sunrpc/auth_gss/svcauth_gss.c b/net/sunrpc/auth_gss/svcauth_gss.c
+index 962791e..b66dd5c 100644
+--- a/net/sunrpc/auth_gss/svcauth_gss.c
++++ b/net/sunrpc/auth_gss/svcauth_gss.c
+@@ -1819,6 +1819,9 @@ static int svcauth_gss_wrap_integ(struct svc_rqst *rqstp)
+ 		goto wrap_failed;
+ 	xdr_commit_encode(xdr);
+ 
++	if (xdr->page_ptr + 1 > rqstp->rq_next_page)
++		rqstp->rq_next_page = xdr->page_ptr + 1;
++
+ out:
+ 	return 0;
+ 
+-- 
+2.54.0 (Apple Git-157)
+

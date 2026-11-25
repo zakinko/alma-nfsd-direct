@@ -19,6 +19,11 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        # 36: upstream mainline only; 46: with the fixes queued in nfsd-testing
+        limit: [36, 46]
     steps:
       - uses: actions/checkout@v4
       - name: Boot AlmaLinux 9
@@ -30,8 +35,8 @@ jobs:
       - name: Build the kernel
         run: |
           cd $W
-          scp -q -r -i key -P 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $GITHUB_WORKSPACE/el9k $GITHUB_WORKSPACE/el9/run.sh $GITHUB_WORKSPACE/el9/bvec.bt $GITHUB_WORKSPACE/el9/dioal.sh $GITHUB_WORKSPACE/el9/dioal.c root@127.0.0.1:/root/
-          $S 'sh /root/el9k/build.sh'
+          scp -q -r -i key -P 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $GITHUB_WORKSPACE/el9k $GITHUB_WORKSPACE/el9/run.sh $GITHUB_WORKSPACE/el9/bvec.bt $GITHUB_WORKSPACE/el9/dioal.sh $GITHUB_WORKSPACE/el9/dioal.c $GITHUB_WORKSPACE/el9/unaligned.sh root@127.0.0.1:/root/
+          $S 'LIMIT=${{ matrix.limit }} sh /root/el9k/build.sh'
       - name: Reboot into it
         run: |
           cd $W
@@ -48,3 +53,9 @@ jobs:
         run: |
           cd $W
           $S 'sh /root/dioal.sh'
+      - name: Unaligned READs
+        if: always()
+        timeout-minutes: 40
+        run: |
+          cd $W
+          $S 'sh /root/unaligned.sh' || { $S 'dmesg | tail -60'; exit 1; }

@@ -1,0 +1,156 @@
+From deb161b748a0f1af2dd0036cdc87e1570cb76475 Mon Sep 17 00:00:00 2001
+From: Showta Ishizaki <zakinko@snowrabbit.org>
+Date: Wed, 25 Nov 2026 09:22:06 +0900
+Subject: [PATCH 44/46] NFSD: Account for page_base in reply-space decisions
+
+JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
+
+Upstream Status: git.kernel.org/pub/scm/linux/kernel/git/cel/linux.git (nfsd-testing)
+
+Conflicts: no nfsd_read_io_mode(), no trace events, and no minimum READ size
+    for direct I/O (638e67a78f4b).
+
+commit 87ae90bfb274bd9780b85d327e6fdb08f194b1de
+Author: Chuck Lever <cel@kernel.org>
+Date:   Mon, 09 Nov 2026 14:53:27 -0500
+
+    NFSD: Account for page_base in reply-space decisions
+
+    The direct-read admission check ignores the alignment pad that
+    nfsd_direct_read() records in rq_res.page_base. nfsd4_encode_readv()
+    restricts buflen for the pad only after the read has placed it, so a
+    direct READ whose pad and payload do not fit the Reply pages fails
+    with NFS4ERR_RESOURCE, or NFS4ERR_REP_TOO_BIG under a session, where
+    a buffered read would succeed. nfsd_iter_read() places a buffered
+    read at page_len alone. Only the last-operation restriction on direct
+    READ keeps a later READ from overwriting a direct READ's payload.
+
+    Have nfsd4_encode_readv() refuse the direct path, with a new trace
+    event, for a READ whose aligned count would not fit the Reply pages
+    behind its pad. Have nfsd_iter_read() locate the next sink page from
+    page_base + page_len.
+
+    Fixes: d686e64e931c ("NFSD: Implement NFSD_IO_DIRECT for NFS READ")
+    Cc: stable@vger.kernel.org
+    Link: https://patch.msgid.link/20261109-xdr-page-base-v1-11-a4f4411d760d@kernel.org
+    Signed-off-by: Chuck Lever <cel@kernel.org>
+
+Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
+---
+ fs/nfsd/nfs4proc.c |  2 +-
+ fs/nfsd/nfs4xdr.c  | 51 ++++++++++++++++++++++++++++++++++++++--------
+ fs/nfsd/vfs.c      |  9 ++++----
+ 3 files changed, 49 insertions(+), 13 deletions(-)
+
+diff --git a/fs/nfsd/nfs4proc.c b/fs/nfsd/nfs4proc.c
+index 2c40c44..cbdee4a 100644
+--- a/fs/nfsd/nfs4proc.c
++++ b/fs/nfsd/nfs4proc.c
+@@ -998,7 +998,7 @@ nfsd4_read(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
+ 
+ 		argp->splice_ok = false;
+ 	}
+-	/* The NFSv4 reply-space checks do not account for rq_res.page_base */
++	/* Nothing is yet encoded behind a direct READ's payload */
+ 	read->rd_dio_ok = nfsd4_last_compound_op(rqstp);
+ 
+ 	/* check stateid */
+diff --git a/fs/nfsd/nfs4xdr.c b/fs/nfsd/nfs4xdr.c
+index 8443465..e4da89d 100644
+--- a/fs/nfsd/nfs4xdr.c
++++ b/fs/nfsd/nfs4xdr.c
+@@ -4428,6 +4428,48 @@ out_err:
+ 	return nfserr;
+ }
+ 
++/*
++ * Reply-buffer checks that nfsd_iter_read() cannot make: the payload's
++ * placement depends on the alignment pad, and the pad on the READ offset.
++ */
++static bool nfsd4_direct_read_fits(struct nfsd4_compoundres *resp,
++				   struct nfsd4_read *read,
++				   unsigned long count)
++{
++	struct svc_rqst *rqstp = resp->rqstp;
++	struct xdr_stream *xdr = resp->xdr;
++	u32 offset_align = read->rd_nf->nf_dio_read_offset_align;
++	loff_t offset = read->rd_offset;
++	unsigned int pad;
++
++	/*
++	 * nfsd_iter_read() reads the I/O mode again. Refuse here so that a
++	 * switch to direct mode in between cannot bypass the checks below.
++	 */
++	if (nfsd_io_cache_read != NFSD_IO_DIRECT)
++		return false;
++	/* nfsd_iter_read() refuses these */
++	if (!offset_align || rqstp->rq_res.page_len)
++		return true;
++
++	pad = offset - round_down(offset, offset_align);
++	if (pad & (XDR_UNIT - 1)) {
++		/*
++		 * The XDR pad goes in the tail, and moving the stream
++		 * there takes a word of room in the head.
++		 */
++		if (!nfsd4_pad_fits_in_head(xdr))
++			return false;
++	} else {
++		s64 space = (s64)nfsd4_reply_buflen_with_pad(rqstp, pad) -
++			    rqstp->rq_res.len;
++
++		if ((s64)xdr_align_size(count) > space)
++			return false;
++	}
++	return true;
++}
++
+ static __be32 nfsd4_encode_readv(struct nfsd4_compoundres *resp,
+ 				 struct nfsd4_read *read,
+ 				 unsigned long maxcount)
+@@ -4438,14 +4480,7 @@ static __be32 nfsd4_encode_readv(struct nfsd4_compoundres *resp,
+ 	__be32 zero = xdr_zero;
+ 	__be32 nfserr;
+ 
+-	/*
+-	 * A direct read at an offset that is not a multiple of XDR_UNIT puts
+-	 * its XDR pad in the tail. Moving the stream there takes a word of
+-	 * room in the head.
+-	 */
+-	if (dio_ok && (read->rd_offset & (XDR_UNIT - 1)) &&
+-	    nfsd_io_cache_read == NFSD_IO_DIRECT &&
+-	    !xdr->buf->page_len && !nfsd4_pad_fits_in_head(xdr))
++	if (dio_ok && !nfsd4_direct_read_fits(resp, read, maxcount))
+ 		dio_ok = false;
+ 
+ 	nfserr = nfsd_iter_read(resp->rqstp, read->rd_fhp, read->rd_nf,
+diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
+index d1b1fc9..54ff41b 100644
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -1167,8 +1167,8 @@ nfsd_direct_read(struct svc_rqst *rqstp, struct svc_fh *fhp,
+  *
+  * Some filesystems or situations cannot use nfsd_splice_read. This
+  * function is the slightly less-performant fallback for those cases.
+- * File data lands in @rqstp->rq_res.pages at the offset .page_len
+- * records. On return, @rqstp->rq_next_page points past the last page
++ * File data lands in @rqstp->rq_res.pages at offset .page_base +
++ * .page_len. On return, @rqstp->rq_next_page points past the last page
+  * offered to the read.
+  *
+  * A direct read leaves its alignment pad at the front of the pages and
+@@ -1184,8 +1184,9 @@ __be32 nfsd_iter_read(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 		      u32 *eof, bool dio_ok)
+ {
+ 	struct xdr_buf *buf = &rqstp->rq_res;
+-	struct page **page = buf->pages + (buf->page_len >> PAGE_SHIFT);
+-	unsigned int base = buf->page_len & ~PAGE_MASK;
++	unsigned int next = buf->page_base + buf->page_len;
++	struct page **page = buf->pages + (next >> PAGE_SHIFT);
++	unsigned int base = next & ~PAGE_MASK;
+ 	struct file *file = nf->nf_file;
+ 	unsigned long v, total;
+ 	struct iov_iter iter;
+-- 
+2.54.0 (Apple Git-157)
+

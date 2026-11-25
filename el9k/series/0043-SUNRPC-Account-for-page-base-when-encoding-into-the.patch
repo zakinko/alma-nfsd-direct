@@ -1,0 +1,273 @@
+From 6229082e5371b3ffbc44a1d8215cc26032bff43b Mon Sep 17 00:00:00 2001
+From: Showta Ishizaki <zakinko@snowrabbit.org>
+Date: Wed, 25 Nov 2026 09:22:06 +0900
+Subject: [PATCH 43/46] SUNRPC: Account for page_base when encoding into the reply pages
+
+JIRA: https://issues.redhat.com/browse/RHEL-XXXXX
+
+Upstream Status: git.kernel.org/pub/scm/linux/kernel/git/cel/linux.git (nfsd-testing)
+
+Conflicts: no xdrgen_ctx in struct xdr_stream, so a client stream is told by
+    xdr->rqst, which svcxdr_init_encode() leaves NULL.
+
+commit efb47f601587f3588cbf665d2df293a5ad235c03
+Author: Chuck Lever <cel@kernel.org>
+Date:   Mon, 09 Nov 2026 14:53:23 -0500
+
+    SUNRPC: Account for page_base when encoding into the reply pages
+
+    A direct READ leaves an alignment pad at the front of the reply pages
+    records the pad's length in rq_res.page_base.
+    xdr_get_next_encode_buffer() enters the pages at offset 0 and
+    xdr_reserve_space_vec() sizes its chunks from page_len alone, so
+    nfsd4_encode_readv() leaves the stream page_base bytes short of the
+    payload's end.
+
+    svcauth_gss_wrap_integ() then writes the krb5i GSS MIC over the end of
+    the payload. READs from a read_io=direct export over a krb5i mount fail
+    with an integrity error whenever the READ offset is not aligned to the
+    device.
+
+    When a server reply stream enters the pages with page_len zero and
+    page_base nonzero, start at the offset page_base names and size
+    each xdr_reserve_space_vec() chunk from page_base + page_len. When
+    xdr_truncate_encode() returns the stream to the head, clear page_base
+    so a failed READ does not leave its pad to the next operation.
+
+    The capacity check still compares buf->len + nbytes against buflen.
+    Under an NFSv4.1 session buflen is the client's maxresp_sz less the
+    auth slack, a wire-byte budget the pad does not consume, so charging
+    the pad there would refuse a maximum-size READ. Add
+    nfsd4_reply_buflen_with_pad(), which returns the page array's size
+    less the pad and the auth slack, or the current buflen when that is
+    smaller, and have nfsd4_encode_readv() restrict buflen to it once a
+    direct read has left a word-multiple pad in page_base. The slack
+    comes off because svcauth_gss restores it to buflen after the Reply
+    is encoded.
+
+    A stable backport of this patch needs the preceding "NFSD: Place a
+    word-unaligned direct READ's XDR pad in the tail" first.
+
+    Fixes: d686e64e931c ("NFSD: Implement NFSD_IO_DIRECT for NFS READ")
+    Cc: stable@vger.kernel.org
+    Link: https://patch.msgid.link/20261109-xdr-page-base-v1-7-a4f4411d760d@kernel.org
+    Signed-off-by: Chuck Lever <cel@kernel.org>
+
+Signed-off-by: Showta Ishizaki <zakinko@snowrabbit.org>
+---
+ fs/nfsd/nfs4proc.c |  2 +-
+ fs/nfsd/nfs4xdr.c  | 13 ++++++++++--
+ fs/nfsd/vfs.c      |  6 +++---
+ fs/nfsd/xdr4.h     | 31 +++++++++++++++++++++++++++
+ net/sunrpc/xdr.c   | 53 +++++++++++++++++++++++++++++++++++-----------
+ 5 files changed, 87 insertions(+), 18 deletions(-)
+
+diff --git a/fs/nfsd/nfs4proc.c b/fs/nfsd/nfs4proc.c
+index ee6cafe..2c40c44 100644
+--- a/fs/nfsd/nfs4proc.c
++++ b/fs/nfsd/nfs4proc.c
+@@ -998,7 +998,7 @@ nfsd4_read(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
+ 
+ 		argp->splice_ok = false;
+ 	}
+-	/* The xdr_stream encoder does not account for rq_res.page_base */
++	/* The NFSv4 reply-space checks do not account for rq_res.page_base */
+ 	read->rd_dio_ok = nfsd4_last_compound_op(rqstp);
+ 
+ 	/* check stateid */
+diff --git a/fs/nfsd/nfs4xdr.c b/fs/nfsd/nfs4xdr.c
+index 807d229..8443465 100644
+--- a/fs/nfsd/nfs4xdr.c
++++ b/fs/nfsd/nfs4xdr.c
+@@ -4463,6 +4463,16 @@ static __be32 nfsd4_encode_readv(struct nfsd4_compoundres *resp,
+ 	if (xdr->buf->page_base & (XDR_UNIT - 1))
+ 		return nfsd4_encode_page_payload(resp, maxcount);
+ 
++	/* A direct READ's pad occupies pages that buf->len never counts */
++	if (xdr->buf->page_base) {
++		unsigned int buflen;
++
++		buflen = nfsd4_reply_buflen_with_pad(resp->rqstp,
++						     xdr->buf->page_base);
++		if (xdr_restrict_buflen(xdr, buflen))
++			return nfserr_resource;
++	}
++
+ 	/*
+ 	 * svcxdr_encode_opaque_pages() is not used here because
+ 	 * we don't want to encode subsequent results in this
+@@ -5922,8 +5932,7 @@ release:
+ 
+ 	/*
+ 	 * Account for pages consumed while encoding this operation. The
+-	 * xdr_stream primitives don't manage rq_next_page, and
+-	 * xdr->page_ptr does not account for page_base. XDR padding can
++	 * xdr_stream primitives don't manage rq_next_page. XDR padding can
+ 	 * carry page_base + page_len past rq_page_end.
+ 	 */
+ 	next_page = xdr->buf->pages +
+diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
+index 9f71a28..d1b1fc9 100644
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -1172,9 +1172,9 @@ nfsd_direct_read(struct svc_rqst *rqstp, struct svc_fh *fhp,
+  * offered to the read.
+  *
+  * A direct read leaves its alignment pad at the front of the pages and
+- * records the pad length in @rqstp->rq_res.page_base. The xdr_stream
+- * encoder does not account for page_base, so pass @dio_ok false when
+- * more XDR items follow the payload in the pages.
++ * records the pad length in @rqstp->rq_res.page_base. A caller whose
++ * reply-space accounting ignores page_base passes @dio_ok false when more
++ * XDR items follow the payload in the pages.
+  *
+  * Returns nfs_ok on success, otherwise an nfserr stat value is
+  * returned.
+diff --git a/fs/nfsd/xdr4.h b/fs/nfsd/xdr4.h
+index 26d3c10..d03ae69 100644
+--- a/fs/nfsd/xdr4.h
++++ b/fs/nfsd/xdr4.h
+@@ -920,6 +920,37 @@ bool nfsd4_mach_creds_match(struct nfs4_client *cl, struct svc_rqst *rqstp);
+ bool nfs4svc_decode_compoundargs(struct svc_rqst *rqstp, struct xdr_stream *xdr);
+ bool nfs4svc_encode_compoundres(struct svc_rqst *rqstp, struct xdr_stream *xdr);
+ __be32 nfsd4_check_resp_size(struct nfsd4_compoundres *, u32);
++
++/**
++ * nfsd4_reply_buflen_with_pad - Reply buflen once a pad is in the pages
++ * @rqstp: RPC transaction
++ * @pad: bytes a direct READ skips at the front of the Reply pages
++ *
++ * rq_res.buflen bounds rq_res.len, and len never counts the pad a direct
++ * READ leaves at the front of its payload, yet the pad occupies Reply pages.
++ * Once the pad is in place, buflen has to leave room for it in the page
++ * array. A session's maxresp_sz bound on buflen is a wire-byte budget that
++ * the pad does not consume, so a buflen below the page array's size is left
++ * alone.
++ *
++ * The auth slack comes off the page array as well: the security
++ * flavor restores it to buflen after the Reply is encoded, and that
++ * restored space has to be pages the pad does not already occupy.
++ *
++ * Context: Any context.
++ *
++ * Return: the page array's size less @pad and the auth slack, or the
++ * current buflen when that is smaller.
++ */
++static inline unsigned int nfsd4_reply_buflen_with_pad(struct svc_rqst *rqstp,
++						       unsigned int pad)
++{
++	const struct xdr_buf *buf = &rqstp->rq_res;
++	s64 pages = (s64)PAGE_SIZE * (rqstp->rq_page_end - buf->pages) -
++		    pad - rqstp->rq_auth_slack;
++
++	return min_t(s64, buf->buflen, max_t(s64, pages, 0));
++}
+ void nfsd4_encode_operation(struct nfsd4_compoundres *, struct nfsd4_op *);
+ void nfsd4_encode_replay(struct xdr_stream *xdr, struct nfsd4_op *op);
+ __be32 nfsd4_encode_fattr_to_buf(__be32 **p, int words,
+diff --git a/net/sunrpc/xdr.c b/net/sunrpc/xdr.c
+index d3ee866..9edab20 100644
+--- a/net/sunrpc/xdr.c
++++ b/net/sunrpc/xdr.c
+@@ -1050,21 +1050,48 @@ EXPORT_SYMBOL_GPL(__xdr_commit_encode);
+ static noinline __be32 *xdr_get_next_encode_buffer(struct xdr_stream *xdr,
+ 						   size_t nbytes)
+ {
++	struct xdr_buf *buf = xdr->buf;
++	unsigned int base = 0, offset = 0;
+ 	int space_left;
+ 	int frag1bytes, frag2bytes;
+ 	void *p;
+ 
+ 	if (nbytes > PAGE_SIZE)
+ 		goto out_overflow; /* Bigger buffers require special handling */
+-	if (xdr->buf->len + nbytes > xdr->buf->buflen)
++	if (buf->len + nbytes > buf->buflen)
+ 		goto out_overflow; /* Sorry, we're totally out of space */
++
++	/*
++	 * A direct READ leaves page_base bytes of alignment pad at the front of
++	 * the reply pages, so the stream enters the pages past the pad. The pad
++	 * is already taken off buflen, so the capacity check above stands.
++	 */
++	if (unlikely(buf->page_base) && xdr->iov != buf->tail) {
++		if (xdr->rqst)
++			WARN_ON_ONCE(!buf->page_len);
++		else if (WARN_ON_ONCE(buf->page_base & (XDR_UNIT - 1)))
++			goto out_overflow;
++		else
++			base = buf->page_base;
++	}
+ 	frag1bytes = (xdr->end - xdr->p) << 2;
+ 	frag2bytes = nbytes - frag1bytes;
++	if (base && !buf->page_len) {
++		/* __xdr_commit_encode() moves a fragment to offset 0 only */
++		if (WARN_ON_ONCE(frag1bytes))
++			goto out_overflow;
++		offset = offset_in_page(base);
++		/* A reservation cannot span two pages */
++		if (nbytes > PAGE_SIZE - offset)
++			goto out_overflow;
++		xdr->page_ptr = buf->pages + (base >> PAGE_SHIFT);
++	} else {
++		xdr->page_ptr++;
++	}
+ 	if (xdr->iov)
+ 		xdr->iov->iov_len += frag1bytes;
+ 	else
+-		xdr->buf->page_len += frag1bytes;
+-	xdr->page_ptr++;
++		buf->page_len += frag1bytes;
+ 	xdr->iov = NULL;
+ 
+ 	/*
+@@ -1080,16 +1107,16 @@ static noinline __be32 *xdr_get_next_encode_buffer(struct xdr_stream *xdr,
+ 	 * xdr->p is where the next encode will start after
+ 	 * xdr_commit_encode() has shifted this one back:
+ 	 */
+-	p = page_address(*xdr->page_ptr);
++	p = page_address(*xdr->page_ptr) + offset;
+ 	xdr->p = p + frag2bytes;
+-	space_left = xdr->buf->buflen - xdr->buf->len;
+-	if (space_left - frag1bytes >= PAGE_SIZE)
+-		xdr->end = p + PAGE_SIZE;
++	space_left = buf->buflen - buf->len;
++	if (space_left - frag1bytes >= PAGE_SIZE - offset)
++		xdr->end = p + PAGE_SIZE - offset;
+ 	else
+ 		xdr->end = p + space_left - frag1bytes;
+ 
+-	xdr->buf->page_len += frag2bytes;
+-	xdr->buf->len += nbytes;
++	buf->page_len += frag2bytes;
++	buf->len += nbytes;
+ 	return p;
+ out_overflow:
+ 	trace_rpc_xdr_overflow(xdr, nbytes);
+@@ -1156,7 +1183,8 @@ int xdr_reserve_space_vec(struct xdr_stream *xdr, size_t nbytes)
+ 
+ 	/* XXX: Let's find a way to make this more efficient */
+ 	while (nbytes) {
+-		thislen = xdr->buf->page_len % PAGE_SIZE;
++		thislen = (xdr->buf->page_base + xdr->buf->page_len) %
++			  PAGE_SIZE;
+ 		thislen = min_t(size_t, nbytes, PAGE_SIZE - thislen);
+ 
+ 		p = xdr_reserve_space(xdr, thislen);
+@@ -1228,10 +1256,11 @@ void xdr_truncate_encode(struct xdr_stream *xdr, size_t len)
+ 		WARN_ON_ONCE(xdr->iov);
+ 		return;
+ 	}
+-	if (fraglen)
++	if (fraglen || !xdr->iov)
+ 		xdr->end = head->iov_base + head->iov_len;
+ 	/* (otherwise assume xdr->end is already set) */
+-	xdr->page_ptr--;
++	xdr->page_ptr = buf->pages - 1;
++	buf->page_base = 0;
+ 	head->iov_len = len;
+ 	buf->len = len;
+ 	xdr->p = head->iov_base + head->iov_len;
+-- 
+2.54.0 (Apple Git-157)
+

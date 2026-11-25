@@ -2,6 +2,9 @@ name: krb5i client diagnostics on AlmaLinux 9 (stock kernel)
 
 on:
   workflow_dispatch:
+  push:
+    branches: [nfsd-testing-fixes]
+    paths: ['el9/krbdiag.sh', '.github/workflows/el9krb.yml']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

@@ -1,0 +1,26 @@
+name: krb5i client diagnostics on AlmaLinux 9 (stock kernel)
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Boot AlmaLinux 9
+        run: sh mainline/boot.sh
+        env:
+          IMG: https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2
+          UD: el9k/user-data
+          READY: test -f /var/tmp/ready
+      - name: krb5i diagnostics
+        run: |
+          cd $W
+          scp -q -i key -P 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $GITHUB_WORKSPACE/el9/krbdiag.sh root@127.0.0.1:/root/
+          $S 'sh /root/krbdiag.sh'

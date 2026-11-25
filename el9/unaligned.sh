@@ -32,6 +32,12 @@ rm -f /etc/krb5.keytab; kadmin.local -q "ktadd nfs/$N" >/dev/null 2>&1
 systemctl start krb5kdc || FAIL "krb5kdc"
 echo "/srv/nv *(rw,no_root_squash,sync,fsid=3,sec=sys:krb5i)" > /etc/exports
 mountpoint -q /srv/nv || FAIL "/srv/nv is not mounted"
+# Load the GSS modules now that the keytab exists.  At boot
+# auth-rpcgss-module.service is skipped (ConditionPathExists=/etc/krb5.keytab),
+# so without this rpc_pipefs has no gssd/ dir and rpc.gssd exits with
+# "the rpc_pipefs directory is empty!".  The stock kernel happened to have
+# auth_rpcgss already loaded; the localmodconfig kernel does not autoload it.
+modprobe rpcsec_gss_krb5 || FAIL "modprobe rpcsec_gss_krb5"
 systemctl restart gssproxy rpc-gssd; systemctl restart nfs-server; exportfs -ra
 # Diagnose the client GSS daemon: on the custom kernel it has failed to start
 # while the stock kernel's starts fine, and the journal is not otherwise kept.

@@ -23,8 +23,7 @@ jobs:
       fail-fast: false
       matrix:
         # 36: upstream mainline only; 46: with the fixes queued in nfsd-testing
-        # TEMP: diagnosing rpc-gssd on the custom kernel; one build is enough.
-        limit: [46]
+        limit: [36, 46]
     steps:
       - uses: actions/checkout@v4
       - name: Boot AlmaLinux 9

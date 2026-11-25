@@ -39,7 +39,15 @@ scripts/config -d MODULE_SIG -d MODULE_SIG_ALL -d DEBUG_INFO_BTF \
 	-d DEBUG_INFO -e DEBUG_INFO_NONE --set-str LOCALVERSION "-nd" \
 	--set-str EFI_SBAT_FILE ""
 make -s olddefconfig
-grep -E '^CONFIG_(NFSD|SUNRPC_XPRT_RDMA|RDMA_RXE|NVME_TARGET_LOOP|XFS_FS|MD_RAID0|MD_RAID1|BLK_DEV_MD|BLK_DEV_DM|DM_MIRROR)=' .config
+# localmodconfig drops a module if its modprobe above did not land in lsmod,
+# and on the build host auth_rpcgss/rpcsec_gss_krb5 are not always loaded, so
+# the -nd kernel came out without GSS and rpc.gssd would not start (sec=krb5i
+# mounts then failed while sec=sys worked).  Force the GSS stack back on; the
+# Kconfig "select"s pull in the crypto it needs.  olddefconfig honours them.
+scripts/config -m SUNRPC_GSS -m RPCSEC_GSS_KRB5
+make -s olddefconfig
+grep -E '^CONFIG_(NFSD|SUNRPC_XPRT_RDMA|RDMA_RXE|NVME_TARGET_LOOP|XFS_FS|MD_RAID0|MD_RAID1|BLK_DEV_MD|BLK_DEV_DM|DM_MIRROR|SUNRPC_GSS|RPCSEC_GSS_KRB5)=' .config
+grep -q '^CONFIG_RPCSEC_GSS_KRB5=' .config || { echo "FAIL: RPCSEC_GSS_KRB5 not enabled"; exit 1; }
 time make -s -j$(nproc) bzImage modules
 make -s modules_install
 make -s install

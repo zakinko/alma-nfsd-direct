@@ -33,6 +33,21 @@ systemctl start krb5kdc || FAIL "krb5kdc"
 echo "/srv/nv *(rw,no_root_squash,sync,fsid=3,sec=sys:krb5i)" > /etc/exports
 mountpoint -q /srv/nv || FAIL "/srv/nv is not mounted"
 systemctl restart gssproxy rpc-gssd; systemctl restart nfs-server; exportfs -ra
+# Diagnose the client GSS daemon: on the custom kernel it has failed to start
+# while the stock kernel's starts fine, and the journal is not otherwise kept.
+if ! systemctl is-active --quiet rpc-gssd; then
+	echo "---- rpc-gssd failed to start; diagnostics ----"
+	systemctl --no-pager -l status rpc-gssd 2>&1 | head -25
+	journalctl --no-pager -xeu rpc-gssd 2>&1 | tail -25
+	echo "---- modinfo / modprobe gss ----"
+	for m in auth_rpcgss rpcsec_gss_krb5; do
+		ls -l /lib/modules/$(uname -r)/kernel/net/sunrpc/${m%%_*}*/* 2>/dev/null
+		modprobe -v $m 2>&1 | head -5 || echo "modprobe $m failed"
+	done
+	echo "---- rpc.gssd -f -vvv (5s) ----"
+	timeout 5 /usr/sbin/rpc.gssd -f -vvv 2>&1 | head -30
+	echo "---- end diagnostics ----"
+fi
 D=/sys/kernel/debug/nfsd
 F=/srv/nv/ua; rm -f $F
 dd if=/dev/urandom of=$F bs=1M count=64 conv=fsync status=none; chmod 644 $F

@@ -53,12 +53,12 @@ jobs:
         run: |
           cd $W
           $S 'sh /root/dioal.sh'
-      - name: Repeated direct READs over RDMA and TCP
+      - name: Repeated direct READs (RDMA, TCP, md)
         if: always()
         timeout-minutes: 60
         run: |
           cd $W
-          $S 'sh /root/rdmarep.sh' || { $S 'dmesg | tail -60'; exit 1; }
+          $S 'N=0 sh /root/rdmarep.sh' || { $S 'dmesg | tail -60'; exit 1; }
       - name: Unaligned READs
         if: always()
         timeout-minutes: 40
